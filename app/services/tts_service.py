@@ -1,10 +1,13 @@
 from pathlib import Path
 from typing import Generator
+import logging
 import uuid
 
 from app.config import settings
 from app.engines.kokoro_engine import KokoroEngine
 from app.utils.audio import combine_wav_files
+
+logger = logging.getLogger(__name__)
 
 
 class TTSService:
@@ -13,7 +16,7 @@ class TTSService:
 
     def get_engine(self, lang_code: str) -> KokoroEngine:
         if lang_code not in self.engines:
-            print(f"[TTSService] Loading Kokoro engine for lang_code={lang_code}")
+            logger.info("Loading Kokoro engine for lang_code=%s", lang_code)
             self.engines[lang_code] = KokoroEngine(lang_code=lang_code)
 
         return self.engines[lang_code]

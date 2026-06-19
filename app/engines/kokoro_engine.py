@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List, Generator
+import logging
 import uuid
 
 import soundfile as sf
@@ -7,6 +8,8 @@ from kokoro import KPipeline
 
 from app.config import settings
 from app.utils.audio import audio_array_to_wav_bytes, audio_array_to_pcm_bytes
+
+logger = logging.getLogger(__name__)
 
 
 class KokoroEngine:
@@ -72,7 +75,7 @@ class KokoroEngine:
         )
 
         for index, (_graphemes, _phonemes, audio) in enumerate(generator):
-            print(f"[KokoroEngine] Streaming WAV chunk {index}")
+            logger.debug("Streaming WAV chunk %s", index)
             yield audio_array_to_wav_bytes(audio)
 
     def stream_pcm_chunks(
@@ -90,5 +93,5 @@ class KokoroEngine:
         )
 
         for index, (_graphemes, _phonemes, audio) in enumerate(generator):
-            print(f"[KokoroEngine] Streaming PCM chunk {index}")
+            logger.debug("Streaming PCM chunk %s", index)
             yield audio_array_to_pcm_bytes(audio)

@@ -1,4 +1,32 @@
 import subprocess
+import logging
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=r".*dropout option adds dropout.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message=r".*weight_norm.*deprecated.*",
+)
+
+
+def _configure_app_logging() -> None:
+    app_logger = logging.getLogger("app")
+    if app_logger.handlers:
+        return
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+    app_logger.addHandler(handler)
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = False
+
+
+_configure_app_logging()
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
