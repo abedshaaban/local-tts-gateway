@@ -12,7 +12,23 @@ from app.utils.audio import audio_array_to_wav_bytes, audio_array_to_pcm_bytes
 class KokoroEngine:
     def __init__(self, lang_code: str = "a"):
         self.lang_code = lang_code
-        self.pipeline = KPipeline(lang_code=lang_code)
+
+        try:
+            self.pipeline = KPipeline(
+                lang_code=lang_code,
+                repo_id=settings.kokoro_repo_id,
+            )
+        except Exception as error:
+            if settings.kokoro_local_only:
+                raise RuntimeError(
+                    "Failed to load Kokoro in local-only mode. "
+                    "The model may not be downloaded/cached yet. "
+                    "Run: python scripts/bootstrap_kokoro.py "
+                    "or temporarily set KOKORO_LOCAL_ONLY=false and call /tts/wav once. "
+                    f"Original error: {error}"
+                ) from error
+
+            raise
 
     def generate_wav_files(
         self,

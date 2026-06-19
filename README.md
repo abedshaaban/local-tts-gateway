@@ -58,6 +58,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+Then bootstrap the Kokoro model (requires internet once):
+
+```bash
+python scripts/bootstrap_kokoro.py
+```
+
 Then start the server with the [Quick start](#quick-start) commands above.
 
 ### Activate the virtualenv
@@ -68,6 +74,77 @@ Then start the server with the [Quick start](#quick-start) commands above.
 | fish | `source .venv/bin/activate.fish` |
 
 To leave the virtualenv later: `deactivate`
+
+## Running Fully Local / Offline
+
+This project can run without contacting Hugging Face after Kokoro has been downloaded once.
+
+### 1. Bootstrap Kokoro once
+
+Run this while connected to the internet:
+
+```bash
+source .venv/bin/activate
+python scripts/bootstrap_kokoro.py
+```
+
+This downloads and caches the Kokoro model locally.
+
+### 2. Enable offline mode
+
+Create `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Make sure these values exist:
+
+```env
+KOKORO_LOCAL_ONLY=true
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+HF_HOME=.cache/huggingface
+KOKORO_REPO_ID=hexgrad/Kokoro-82M
+```
+
+### 3. Start the server
+
+```bash
+source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8888 --reload
+```
+
+### 4. Test offline WAV generation
+
+```bash
+curl -X POST http://127.0.0.1:8888/tts/wav \
+  -H "Content-Type: application/json" \
+  -d '{"text":"This is running locally without calling Hugging Face.","voice":"af_heart","speed":1,"lang_code":"a"}' \
+  --output offline-test.wav
+
+afplay offline-test.wav
+```
+
+### 5. Test offline PCM streaming
+
+```bash
+curl -N -X POST http://127.0.0.1:8888/tts/stream/pcm \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Offline chunk one.\nOffline chunk two.\nOffline chunk three.","voice":"af_heart","speed":1,"lang_code":"a","split_pattern":"\\n+"}' \
+  --output offline-stream.pcm
+
+ffmpeg -y -f f32le -ar 24000 -ac 1 -i offline-stream.pcm offline-stream.wav
+
+afplay offline-stream.wav
+```
+
+### Notes
+
+* The first model download requires internet.
+* After bootstrap, normal runtime should be local-only.
+* If the cache is deleted, run `python scripts/bootstrap_kokoro.py` again.
+* The warning about unauthenticated Hugging Face requests should disappear during normal offline runtime because the app should not contact Hugging Face.
 
 ## Health check
 
@@ -145,6 +222,7 @@ afplay stream.wav
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Service health check |
+| GET | `/runtime` | Offline/local runtime settings |
 | GET | `/voices` | Example voices and defaults |
 | POST | `/tts/wav` | Generate speech, return `audio/wav` |
 | POST | `/tts/file` | Generate speech, save to `outputs/`, return path |
@@ -194,8 +272,9 @@ local-tts-gateway/
 │  ├─ engines/          # TTS engine implementations
 │  ├─ services/         # Business logic
 │  └─ utils/            # Audio helpers
+├─ models/              # Local model cache (gitignored)
 ├─ outputs/             # Generated WAV files
-├─ scripts/             # macOS helpers
+├─ scripts/             # Bootstrap, offline test, macOS helpers
 └─ requirements.txt
 ```
 
@@ -217,4 +296,12 @@ DEFAULT_LANG_CODE=a
 DEFAULT_VOICE=af_heart
 DEFAULT_SPEED=1.0
 OUTPUT_DIR=outputs
+KOKORO_REPO_ID=hexgrad/Kokoro-82M
+KOKORO_MODEL_DIR=models/kokoro
+KOKORO_LOCAL_ONLY=true
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+HF_HOME=.cache/huggingface
 ```
+
+See [Running Fully Local / Offline](#running-fully-local--offline) for bootstrap and offline testing.

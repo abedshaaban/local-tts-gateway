@@ -3,10 +3,13 @@ import subprocess
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.config import settings
+from app.offline import configure_offline_runtime
+
+configure_offline_runtime()
+
 from app.schemas import TTSRequest, TTSFileResponse
 from app.services.tts_service import TTSService
-from app.config import settings
-
 
 app = FastAPI(
     title="Local TTS Gateway",
@@ -22,6 +25,17 @@ def health_check():
     return {
         "ok": True,
         "service": "local-tts-gateway",
+    }
+
+
+@app.get("/runtime")
+def runtime_info():
+    return {
+        "kokoro_repo_id": settings.kokoro_repo_id,
+        "kokoro_local_only": settings.kokoro_local_only,
+        "hf_home": str(settings.hf_home),
+        "output_dir": str(settings.output_dir),
+        "sample_rate": settings.sample_rate,
     }
 
 

@@ -1,6 +1,16 @@
 from pathlib import Path
 from pydantic import BaseModel
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
+
+
+def str_to_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+
+    return value.lower() in {"1", "true", "yes", "y", "on"}
 
 
 class Settings(BaseModel):
@@ -16,7 +26,15 @@ class Settings(BaseModel):
     base_dir: Path = Path(__file__).resolve().parent.parent
     output_dir: Path = Path(os.getenv("OUTPUT_DIR", "outputs"))
 
+    kokoro_repo_id: str = os.getenv("KOKORO_REPO_ID", "hexgrad/Kokoro-82M")
+    kokoro_model_dir: Path = Path(os.getenv("KOKORO_MODEL_DIR", "models/kokoro"))
+    kokoro_local_only: bool = str_to_bool(os.getenv("KOKORO_LOCAL_ONLY"), True)
+
+    hf_home: Path = Path(os.getenv("HF_HOME", ".cache/huggingface"))
+
 
 settings = Settings()
 
 settings.output_dir.mkdir(parents=True, exist_ok=True)
+settings.kokoro_model_dir.mkdir(parents=True, exist_ok=True)
+settings.hf_home.mkdir(parents=True, exist_ok=True)

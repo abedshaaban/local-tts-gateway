@@ -3,4 +3,6 @@ __pycache__/
 *.pyc
 .env
 outputs/
+models/
+.cache/
 .DS_Store
