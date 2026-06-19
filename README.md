@@ -1,34 +1,50 @@
 # Local TTS Gateway
 
-A local Python/FastAPI text-to-speech microservice powered by [Kokoro](https://github.com/hexgrad/kokoro).
+A local Python/FastAPI text-to-speech and speech-to-text microservice. TTS is powered by [Kokoro](https://github.com/hexgrad/kokoro). STT uses Parakeet MLX on Apple Silicon with automatic fallback to whisper.cpp and faster-whisper.
 
-Send text to a local API and receive generated speech as a `.wav` file. Useful for macOS selected text, local agents, voiceovers, and experiments.
+Send text to a local API and receive generated speech as a `.wav` file, or upload audio and receive transcribed text. Useful for macOS selected text, local agents, voiceovers, and experiments.
 
 ## Architecture
 
 ```txt
 Mac selected text / website / agents / scripts
         ↓
-POST http://127.0.0.1:8888/tts/wav
+POST http://127.0.0.1:8888/tts/wav   (text → speech)
+POST http://127.0.0.1:8888/stt/text  (speech → text)
         ↓
 Python FastAPI service
         ↓
-Kokoro engine loaded once (lazy, per language)
+TTS: Kokoro engine loaded once (lazy, per language)
+STT: Parakeet MLX → whisper.cpp → faster-whisper (auto fallback)
         ↓
-WAV file returned
+WAV file or JSON transcript returned
 ```
 
-Kokoro pipelines are loaded once and reused between requests — not reloaded on every call.
+Kokoro pipelines are loaded once and reused between requests — not reloaded on every call. STT engine selection is internal; clients do not choose the engine.
 
 ## Requirements
 
 - Python 3.10 or 3.11 (3.12+ may work; use the same interpreter for `venv` and running the server)
 - macOS (for `afplay` in the selection script)
 
-### System dependency
+### System dependencies
 
 ```bash
-brew install espeak-ng
+brew install espeak-ng ffmpeg
+```
+
+For STT, install at least one engine:
+
+```bash
+source .venv/bin/activate
+pip install -U mlx parakeet-mlx    # recommended on Apple Silicon
+pip install faster-whisper       # Python fallback
+```
+
+Optional whisper.cpp fallback (build separately):
+
+```bash
+# Set WHISPER_CPP_BIN and WHISPER_CPP_MODEL in .env after building
 ```
 
 ## Quick start
@@ -62,6 +78,15 @@ Then bootstrap the Kokoro model (requires internet once):
 
 ```bash
 python scripts/bootstrap_kokoro.py
+```
+
+Copy STT settings into `.env` (included in `.env.example`):
+
+```env
+STT_LANGUAGE=en
+STT_ENGINE_ORDER=parakeet_mlx,whisper_cpp,faster_whisper
+STT_RETURN_ENGINE_USED=true
+PARAKEET_MLX_MODEL=mlx-community/parakeet-tdt-0.6b-v3
 ```
 
 Then start the server with the [Quick start](#quick-start) commands above.
@@ -163,6 +188,38 @@ curl -X POST http://127.0.0.1:8888/tts/wav \
 afplay speech.wav
 ```
 
+## Speech-to-text
+
+Upload audio and receive a JSON transcript. The engine is chosen automatically (Parakeet MLX first on Apple Silicon).
+
+```bash
+curl -X POST http://127.0.0.1:8888/stt/text \
+  -F "audio=@speech.wav"
+```
+
+Example response:
+
+```json
+{
+  "text": "Happy birthday to you, happy birthday to you.",
+  "language": "en",
+  "engine_used": "parakeet_mlx",
+  "duration_seconds": 1.2
+}
+```
+
+Supported upload formats: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `webm`. When `ffmpeg` is available, audio is normalized to 16 kHz mono WAV before transcription.
+
+### STT engine priority
+
+Configured via `STT_ENGINE_ORDER` in `.env`:
+
+1. **parakeet_mlx** — Apple Silicon optimized (requires `parakeet-mlx` CLI)
+2. **whisper_cpp** — local whisper.cpp binary + GGML model
+3. **faster_whisper** — Python fallback (`small.en` by default)
+
+Missing engines are skipped at runtime; the app does not fail on startup if a fallback is unavailable.
+
 ## Save a WAV file and return its path
 
 ```bash
@@ -228,6 +285,7 @@ afplay stream.wav
 | POST | `/tts/file` | Generate speech, save to `outputs/`, return path |
 | POST | `/tts/stream` | Stream speech as chunked WAV |
 | POST | `/tts/stream/pcm` | Stream speech as raw PCM (float32le) |
+| POST | `/stt/text` | Transcribe uploaded audio, return JSON |
 
 ### Request body
 
@@ -270,7 +328,8 @@ local-tts-gateway/
 │  ├─ config.py         # Settings
 │  ├─ schemas.py        # Request/response models
 │  ├─ engines/          # TTS engine implementations
-│  ├─ services/         # Business logic
+│  ├─ stt/              # STT engines and router
+│  ├─ services/         # Business logic (TTS + STT)
 │  └─ utils/            # Audio helpers
 ├─ models/              # Local model cache (gitignored)
 ├─ outputs/             # Generated WAV files
@@ -302,6 +361,16 @@ KOKORO_LOCAL_ONLY=true
 HF_HUB_OFFLINE=1
 TRANSFORMERS_OFFLINE=1
 HF_HOME=.cache/huggingface
+
+STT_LANGUAGE=en
+STT_ENGINE_ORDER=parakeet_mlx,whisper_cpp,faster_whisper
+STT_RETURN_ENGINE_USED=true
+PARAKEET_MLX_MODEL=mlx-community/parakeet-tdt-0.6b-v3
+WHISPER_CPP_BIN=./vendor/whisper.cpp/build/bin/whisper-cli
+WHISPER_CPP_MODEL=./models/whisper/ggml-large-v3-turbo.bin
+FASTER_WHISPER_MODEL=small.en
+FASTER_WHISPER_DEVICE=cpu
+FASTER_WHISPER_COMPUTE_TYPE=int8
 ```
 
 See [Running Fully Local / Offline](#running-fully-local--offline) for bootstrap and offline testing.

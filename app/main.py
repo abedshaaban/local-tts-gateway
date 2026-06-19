@@ -28,7 +28,11 @@ def _configure_app_logging() -> None:
 
 _configure_app_logging()
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import os
+import shutil
+import tempfile
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.config import settings
@@ -36,16 +40,18 @@ from app.offline import configure_offline_runtime
 
 configure_offline_runtime()
 
-from app.schemas import TTSRequest, TTSFileResponse
+from app.schemas import TTSRequest, TTSFileResponse, STTResponse
 from app.services.tts_service import TTSService
+from app.services.stt_service import STTService
 
 app = FastAPI(
     title="Local TTS Gateway",
-    description="Local Kokoro-powered text-to-speech service",
-    version="0.1.0",
+    description="Local Kokoro-powered text-to-speech and speech-to-text service",
+    version="0.2.0",
 )
 
 tts_service = TTSService()
+stt_service = STTService()
 
 
 @app.get("/health")
@@ -182,6 +188,37 @@ def stream_tts_pcm(payload: TTSRequest):
             status_code=500,
             detail=f"Failed to stream PCM speech: {str(error)}",
         )
+
+
+@app.post("/stt/text", response_model=STTResponse)
+async def speech_to_text(audio: UploadFile = File(...)):
+    suffix = "wav"
+    if audio.filename and "." in audio.filename:
+        suffix = audio.filename.rsplit(".", 1)[-1].lower()
+
+    allowed = {"wav", "mp3", "m4a", "aac", "flac", "ogg", "webm"}
+    if suffix not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format: {suffix}. Supported: {sorted(allowed)}",
+        )
+
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{suffix}") as temp:
+            shutil.copyfileobj(audio.file, temp)
+            temp_path = temp.name
+
+        result = stt_service.transcribe_file(temp_path)
+        return result
+
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 @app.post("/tts/play")

@@ -67,3 +67,23 @@ def audio_array_to_wav_bytes(audio) -> bytes:
 def audio_array_to_pcm_bytes(audio) -> bytes:
     audio = normalize_audio_array(audio)
     return audio.tobytes()
+
+
+def normalize_for_stt(input_path: str, output_path: str) -> str:
+    import subprocess
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-vn",
+        output_path,
+    ]
+
+    subprocess.run(cmd, check=True, capture_output=True)
+    return output_path

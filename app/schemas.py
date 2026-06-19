@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -12,3 +14,10 @@ class TTSRequest(BaseModel):
 class TTSFileResponse(BaseModel):
     filename: str
     path: str
+
+
+class STTResponse(BaseModel):
+    text: str
+    language: str = "en"
+    engine_used: Optional[str] = None
+    duration_seconds: float
