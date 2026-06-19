@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Generator
 import uuid
 
 from app.config import settings
@@ -12,6 +13,7 @@ class TTSService:
 
     def get_engine(self, lang_code: str) -> KokoroEngine:
         if lang_code not in self.engines:
+            print(f"[TTSService] Loading Kokoro engine for lang_code={lang_code}")
             self.engines[lang_code] = KokoroEngine(lang_code=lang_code)
 
         return self.engines[lang_code]
@@ -22,6 +24,7 @@ class TTSService:
         voice: str = "af_heart",
         speed: float = 1.0,
         lang_code: str = "a",
+        split_pattern: str = r"\n+",
     ) -> Path:
         engine = self.get_engine(lang_code)
 
@@ -33,8 +36,43 @@ class TTSService:
             voice=voice,
             speed=speed,
             output_prefix=output_prefix,
+            split_pattern=split_pattern,
         )
 
         final_output = settings.output_dir / f"{output_prefix}.wav"
 
         return combine_wav_files(chunk_files, final_output)
+
+    def stream_wav(
+        self,
+        text: str,
+        voice: str = "af_heart",
+        speed: float = 1.0,
+        lang_code: str = "a",
+        split_pattern: str = r"\n+",
+    ) -> Generator[bytes, None, None]:
+        engine = self.get_engine(lang_code)
+
+        yield from engine.stream_wav_chunks(
+            text=text,
+            voice=voice,
+            speed=speed,
+            split_pattern=split_pattern,
+        )
+
+    def stream_pcm(
+        self,
+        text: str,
+        voice: str = "af_heart",
+        speed: float = 1.0,
+        lang_code: str = "a",
+        split_pattern: str = r"\n+",
+    ) -> Generator[bytes, None, None]:
+        engine = self.get_engine(lang_code)
+
+        yield from engine.stream_pcm_chunks(
+            text=text,
+            voice=voice,
+            speed=speed,
+            split_pattern=split_pattern,
+        )

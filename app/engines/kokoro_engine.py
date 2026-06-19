@@ -1,11 +1,12 @@
 from pathlib import Path
-from typing import List
+from typing import List, Generator
 import uuid
 
 import soundfile as sf
 from kokoro import KPipeline
 
 from app.config import settings
+from app.utils.audio import audio_array_to_wav_bytes, audio_array_to_pcm_bytes
 
 
 class KokoroEngine:
@@ -39,3 +40,39 @@ class KokoroEngine:
             output_files.append(output_path)
 
         return output_files
+
+    def stream_wav_chunks(
+        self,
+        text: str,
+        voice: str,
+        speed: float,
+        split_pattern: str = r"\n+",
+    ) -> Generator[bytes, None, None]:
+        generator = self.pipeline(
+            text,
+            voice=voice,
+            speed=speed,
+            split_pattern=split_pattern,
+        )
+
+        for index, (_graphemes, _phonemes, audio) in enumerate(generator):
+            print(f"[KokoroEngine] Streaming WAV chunk {index}")
+            yield audio_array_to_wav_bytes(audio)
+
+    def stream_pcm_chunks(
+        self,
+        text: str,
+        voice: str,
+        speed: float,
+        split_pattern: str = r"\n+",
+    ) -> Generator[bytes, None, None]:
+        generator = self.pipeline(
+            text,
+            voice=voice,
+            speed=speed,
+            split_pattern=split_pattern,
+        )
+
+        for index, (_graphemes, _phonemes, audio) in enumerate(generator):
+            print(f"[KokoroEngine] Streaming PCM chunk {index}")
+            yield audio_array_to_pcm_bytes(audio)

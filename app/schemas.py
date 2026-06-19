@@ -6,6 +6,7 @@ class TTSRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     lang_code: str = "a"
+    split_pattern: str = r"\n+"
 
 
 class TTSFileResponse(BaseModel):

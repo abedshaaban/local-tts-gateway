@@ -102,6 +102,44 @@ With the server running:
 ./scripts/read-selection.sh "Hello. This text was sent from a local script and read using Kokoro."
 ```
 
+## Streaming
+
+The service supports two streaming endpoints.
+
+### Chunked WAV Streaming
+
+```bash
+curl -N -X POST http://127.0.0.1:8888/tts/stream \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Chunk one.\nChunk two.\nChunk three.","voice":"af_heart","speed":1,"lang_code":"a"}' \
+  --output stream.wav
+```
+
+This endpoint streams generated WAV chunks.
+
+Note: this may not produce one perfectly playable WAV file because each chunk has its own WAV header.
+
+### Raw PCM Streaming
+
+```bash
+curl -N -X POST http://127.0.0.1:8888/tts/stream/pcm \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Chunk one.\nChunk two.\nChunk three.","voice":"af_heart","speed":1,"lang_code":"a"}' \
+  --output stream.pcm
+```
+
+Convert to WAV:
+
+```bash
+ffmpeg -f f32le -ar 24000 -ac 1 -i stream.pcm stream.wav
+```
+
+Play on macOS:
+
+```bash
+afplay stream.wav
+```
+
 ## API endpoints
 
 | Method | Path | Description |
@@ -110,6 +148,8 @@ With the server running:
 | GET | `/voices` | Example voices and defaults |
 | POST | `/tts/wav` | Generate speech, return `audio/wav` |
 | POST | `/tts/file` | Generate speech, save to `outputs/`, return path |
+| POST | `/tts/stream` | Stream speech as chunked WAV |
+| POST | `/tts/stream/pcm` | Stream speech as raw PCM (float32le) |
 
 ### Request body
 
@@ -161,7 +201,6 @@ local-tts-gateway/
 
 ## Future improvements
 
-- `POST /tts/stream` — streaming audio
 - `POST /tts/play` — generate and play via `afplay`
 - API key protection
 - Request queue for long text

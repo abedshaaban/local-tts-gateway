@@ -1,9 +1,12 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+import subprocess
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.schemas import TTSRequest, TTSFileResponse
 from app.services.tts_service import TTSService
 from app.config import settings
+
 
 app = FastAPI(
     title="Local TTS Gateway",
@@ -45,6 +48,7 @@ def generate_tts_wav(payload: TTSRequest):
             voice=payload.voice,
             speed=payload.speed,
             lang_code=payload.lang_code,
+            split_pattern=payload.split_pattern,
         )
 
         return FileResponse(
@@ -68,6 +72,7 @@ def generate_tts_file(payload: TTSRequest):
             voice=payload.voice,
             speed=payload.speed,
             lang_code=payload.lang_code,
+            split_pattern=payload.split_pattern,
         )
 
         return TTSFileResponse(
@@ -79,4 +84,84 @@ def generate_tts_file(payload: TTSRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate speech file: {str(error)}",
+        )
+
+
+@app.post("/tts/stream")
+def stream_tts_wav(payload: TTSRequest):
+    try:
+        return StreamingResponse(
+            tts_service.stream_wav(
+                text=payload.text,
+                voice=payload.voice,
+                speed=payload.speed,
+                lang_code=payload.lang_code,
+                split_pattern=payload.split_pattern,
+            ),
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": 'inline; filename="speech-stream.wav"',
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to stream speech: {str(error)}",
+        )
+
+
+@app.post("/tts/stream/pcm")
+def stream_tts_pcm(payload: TTSRequest):
+    try:
+        return StreamingResponse(
+            tts_service.stream_pcm(
+                text=payload.text,
+                voice=payload.voice,
+                speed=payload.speed,
+                lang_code=payload.lang_code,
+                split_pattern=payload.split_pattern,
+            ),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": 'inline; filename="speech-stream.pcm"',
+                "Cache-Control": "no-cache",
+                "X-Audio-Sample-Rate": str(settings.sample_rate),
+                "X-Audio-Format": "float32le",
+                "X-Audio-Channels": "1",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to stream PCM speech: {str(error)}",
+        )
+
+
+@app.post("/tts/play")
+def play_tts(payload: TTSRequest, background_tasks: BackgroundTasks):
+    try:
+        output_path = tts_service.generate_wav(
+            text=payload.text,
+            voice=payload.voice,
+            speed=payload.speed,
+            lang_code=payload.lang_code,
+            split_pattern=payload.split_pattern,
+        )
+
+        background_tasks.add_task(subprocess.run, ["afplay", str(output_path)])
+
+        return {
+            "ok": True,
+            "path": str(output_path),
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to play speech: {str(error)}",
         )
