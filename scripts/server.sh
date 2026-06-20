@@ -20,36 +20,35 @@ HOST="${HOST:-${APP_HOST:-127.0.0.1}}"
 PORT="${PORT:-${APP_PORT:-47829}}"
 BASE_URL="http://${HOST}:${PORT}"
 
-activate_venv() {
-  if [ -d "$VENV_DIR" ]; then
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-  else
+VENV_PYTHON="$VENV_DIR/bin/python"
+
+ensure_venv() {
+  if [ ! -x "$VENV_PYTHON" ]; then
     echo "❌ Virtual environment not found: $VENV_DIR"
-    echo "Run: python3.11 -m venv .venv"
+    echo "Run: python3.11 -m venv .venv && ./scripts/server.sh install"
     exit 1
   fi
 }
 
 install_deps() {
-  activate_venv
-  python -m pip install --upgrade pip
-  pip install -r requirements.txt
+  ensure_venv
+  "$VENV_PYTHON" -m pip install --upgrade pip
+  "$VENV_PYTHON" -m pip install -r requirements.txt
 }
 
 dev_server() {
-  activate_venv
-  uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT" --reload
+  ensure_venv
+  "$VENV_PYTHON" -m uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT" --reload
 }
 
 start_server() {
-  activate_venv
-  uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT"
+  ensure_venv
+  "$VENV_PYTHON" -m uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT"
 }
 
 check_app() {
-  activate_venv
-  python -m compileall app
+  ensure_venv
+  "$VENV_PYTHON" -m compileall app
 }
 
 health() {
@@ -96,7 +95,7 @@ record_stt() {
 }
 
 cache_stt() {
-  activate_venv
+  ensure_venv
 
   echo "🌐 Temporarily allowing online model access for STT cache test..."
   export HF_HUB_OFFLINE=0
