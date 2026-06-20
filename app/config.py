@@ -15,7 +15,7 @@ def str_to_bool(value: str | None, default: bool = False) -> bool:
 
 class Settings(BaseModel):
     app_host: str = os.getenv("APP_HOST", "127.0.0.1")
-    app_port: int = int(os.getenv("APP_PORT", "8888"))
+    app_port: int = int(os.getenv("APP_PORT", "47829"))
 
     default_lang_code: str = os.getenv("DEFAULT_LANG_CODE", "a")
     default_voice: str = os.getenv("DEFAULT_VOICE", "af_heart")

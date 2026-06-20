@@ -17,7 +17,7 @@ if [ -f .env ]; then
 fi
 
 HOST="${HOST:-${APP_HOST:-127.0.0.1}}"
-PORT="${PORT:-${APP_PORT:-8888}}"
+PORT="${PORT:-${APP_PORT:-47829}}"
 BASE_URL="http://${HOST}:${PORT}"
 
 activate_venv() {

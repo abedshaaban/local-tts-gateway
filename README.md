@@ -9,8 +9,8 @@ Send text to a local API and receive generated speech as a `.wav` file, or uploa
 ```txt
 Mac selected text / website / agents / scripts
         ↓
-POST http://127.0.0.1:8888/tts/wav   (text → speech)
-POST http://127.0.0.1:8888/stt/text  (speech → text)
+POST http://127.0.0.1:47829/tts/wav   (text → speech)
+POST http://127.0.0.1:47829/stt/text  (speech → text)
         ↓
 Python FastAPI service
         ↓
@@ -54,13 +54,13 @@ Use this every time you open a new terminal and want to run the server.
 ```bash
 cd local-tts-gateway
 source .venv/bin/activate
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8888 --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 47829 --reload
 ```
 
 Your shell prompt should show `(.venv)` after activation. If `uvicorn` is not found, you skipped `source` — the server must run with the virtualenv's Python, not the system one.
 
-- API: http://127.0.0.1:8888
-- Docs: http://127.0.0.1:8888/docs
+- API: http://127.0.0.1:47829
+- Docs: http://127.0.0.1:47829/docs
 
 ## First-time setup
 
@@ -137,13 +137,13 @@ KOKORO_REPO_ID=hexgrad/Kokoro-82M
 
 ```bash
 source .venv/bin/activate
-uvicorn app.main:app --host 127.0.0.1 --port 8888 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 47829 --reload
 ```
 
 ### 4. Test offline WAV generation
 
 ```bash
-curl -X POST http://127.0.0.1:8888/tts/wav \
+curl -X POST http://127.0.0.1:47829/tts/wav \
   -H "Content-Type: application/json" \
   -d '{"text":"This is running locally without calling Hugging Face.","voice":"af_heart","speed":1,"lang_code":"a"}' \
   --output offline-test.wav
@@ -154,7 +154,7 @@ afplay offline-test.wav
 ### 5. Test offline PCM streaming
 
 ```bash
-curl -N -X POST http://127.0.0.1:8888/tts/stream/pcm \
+curl -N -X POST http://127.0.0.1:47829/tts/stream/pcm \
   -H "Content-Type: application/json" \
   -d '{"text":"Offline chunk one.\nOffline chunk two.\nOffline chunk three.","voice":"af_heart","speed":1,"lang_code":"a","split_pattern":"\\n+"}' \
   --output offline-stream.pcm
@@ -174,13 +174,13 @@ afplay offline-stream.wav
 ## Health check
 
 ```bash
-curl http://127.0.0.1:8888/health
+curl http://127.0.0.1:47829/health
 ```
 
 ## Generate a WAV file
 
 ```bash
-curl -X POST http://127.0.0.1:8888/tts/wav \
+curl -X POST http://127.0.0.1:47829/tts/wav \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello Abed. Kokoro is now running locally as a TTS gateway.","voice":"af_heart","speed":1,"lang_code":"a"}' \
   --output speech.wav
@@ -193,7 +193,7 @@ afplay speech.wav
 Upload audio and receive a JSON transcript. The engine is chosen automatically (Parakeet MLX first on Apple Silicon).
 
 ```bash
-curl -X POST http://127.0.0.1:8888/stt/text \
+curl -X POST http://127.0.0.1:47829/stt/text \
   -F "audio=@speech.wav"
 ```
 
@@ -223,7 +223,7 @@ Missing engines are skipped at runtime; the app does not fail on startup if a fa
 ## Save a WAV file and return its path
 
 ```bash
-curl -X POST http://127.0.0.1:8888/tts/file \
+curl -X POST http://127.0.0.1:47829/tts/file \
   -H "Content-Type: application/json" \
   -d '{"text":"This file will be saved inside the outputs folder.","voice":"af_heart","speed":1,"lang_code":"a"}'
 ```
@@ -243,7 +243,7 @@ The service supports two streaming endpoints.
 ### Chunked WAV Streaming
 
 ```bash
-curl -N -X POST http://127.0.0.1:8888/tts/stream \
+curl -N -X POST http://127.0.0.1:47829/tts/stream \
   -H "Content-Type: application/json" \
   -d '{"text":"Chunk one.\nChunk two.\nChunk three.","voice":"af_heart","speed":1,"lang_code":"a"}' \
   --output stream.wav
@@ -256,7 +256,7 @@ Note: this may not produce one perfectly playable WAV file because each chunk ha
 ### Raw PCM Streaming
 
 ```bash
-curl -N -X POST http://127.0.0.1:8888/tts/stream/pcm \
+curl -N -X POST http://127.0.0.1:47829/tts/stream/pcm \
   -H "Content-Type: application/json" \
   -d '{"text":"Chunk one.\nChunk two.\nChunk three.","voice":"af_heart","speed":1,"lang_code":"a"}' \
   --output stream.pcm
@@ -350,7 +350,7 @@ Copy `.env.example` to `.env`:
 
 ```env
 APP_HOST=127.0.0.1
-APP_PORT=8888
+APP_PORT=47829
 DEFAULT_LANG_CODE=a
 DEFAULT_VOICE=af_heart
 DEFAULT_SPEED=1.0
