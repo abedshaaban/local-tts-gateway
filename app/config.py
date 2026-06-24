@@ -22,6 +22,9 @@ class Settings(BaseModel):
     default_speed: float = float(os.getenv("DEFAULT_SPEED", "1.0"))
 
     sample_rate: int = 24000
+    websocket_stt_max_bytes: int = int(
+        os.getenv("WEBSOCKET_STT_MAX_BYTES", str(100 * 1024 * 1024))
+    )
 
     base_dir: Path = Path(__file__).resolve().parent.parent
     output_dir: Path = Path(os.getenv("OUTPUT_DIR", "outputs"))

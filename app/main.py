@@ -1,5 +1,5 @@
-import subprocess
 import logging
+import subprocess
 import warnings
 
 warnings.filterwarnings(
@@ -32,7 +32,13 @@ import os
 import shutil
 import tempfile
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.config import settings
@@ -43,6 +49,7 @@ configure_offline_runtime()
 from app.schemas import TTSRequest, TTSFileResponse, STTResponse
 from app.services.tts_service import TTSService
 from app.services.stt_service import STTService
+from app.websocket_routes import create_websocket_router
 
 app = FastAPI(
     title="Local TTS Gateway",
@@ -52,6 +59,7 @@ app = FastAPI(
 
 tts_service = TTSService()
 stt_service = STTService()
+app.include_router(create_websocket_router(tts_service, stt_service))
 
 
 @app.get("/health")
@@ -70,6 +78,7 @@ def runtime_info():
         "hf_home": str(settings.hf_home),
         "output_dir": str(settings.output_dir),
         "sample_rate": settings.sample_rate,
+        "websocket_stt_max_bytes": settings.websocket_stt_max_bytes,
     }
 
 

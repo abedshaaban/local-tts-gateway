@@ -274,6 +274,43 @@ Play on macOS:
 afplay stream.wav
 ```
 
+## WebSockets
+
+The service also supports persistent WebSocket connections for TTS and STT.
+
+### TTS WebSocket
+
+Connect to `ws://127.0.0.1:47829/ws/tts`, then send:
+
+```json
+{
+  "type": "synthesize",
+  "request_id": "tts-1",
+  "text": "Hello from WebSockets.",
+  "voice": "af_heart",
+  "speed": 1,
+  "lang_code": "a"
+}
+```
+
+The server responds with a JSON `start` message describing the audio, one or
+more binary PCM frames, then a JSON `complete` message. Audio is mono
+`float32le` at 24 kHz. The connection stays open for additional requests.
+
+### STT WebSocket
+
+Connect to `ws://127.0.0.1:47829/ws/stt`, then:
+
+1. Send `{"type":"start","request_id":"stt-1","format":"webm"}`.
+2. Wait for the JSON `ready` response.
+3. Send one or more binary audio frames.
+4. Send `{"type":"end"}`.
+5. Receive a JSON `transcription` response.
+
+Supported formats are `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, and `webm`.
+Send `{"type":"abort"}` to discard an active upload. The default upload limit
+is 100 MiB and can be changed with `WEBSOCKET_STT_MAX_BYTES`.
+
 ## API endpoints
 
 | Method | Path | Description |
@@ -286,6 +323,8 @@ afplay stream.wav
 | POST | `/tts/stream` | Stream speech as chunked WAV |
 | POST | `/tts/stream/pcm` | Stream speech as raw PCM (float32le) |
 | POST | `/stt/text` | Transcribe uploaded audio, return JSON |
+| WS | `/ws/tts` | Stream synthesized raw PCM frames |
+| WS | `/ws/stt` | Upload audio frames and receive a transcript |
 
 ### Request body
 
