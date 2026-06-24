@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import threading
 import time
 from app.stt.router import STTRouter
 from app.stt.base import STTResult
@@ -12,6 +13,7 @@ class STTService:
         self.router = STTRouter()
         self.return_engine_used = os.getenv("STT_RETURN_ENGINE_USED", "true").lower() == "true"
         self._ffmpeg_available = shutil.which("ffmpeg") is not None
+        self._transcription_lock = threading.Lock()
 
     def transcribe_file(self, audio_path: str) -> STTResult:
         started_at = time.time()
@@ -26,7 +28,8 @@ class STTService:
                 normalize_for_stt(audio_path, normalized_path)
                 transcribe_path = normalized_path
 
-            result = self.router.transcribe(transcribe_path)
+            with self._transcription_lock:
+                result = self.router.transcribe(transcribe_path)
             result["duration_seconds"] = round(time.time() - started_at, 2)
 
             if not self.return_engine_used:

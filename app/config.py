@@ -25,6 +25,24 @@ class Settings(BaseModel):
     websocket_stt_max_bytes: int = int(
         os.getenv("WEBSOCKET_STT_MAX_BYTES", str(100 * 1024 * 1024))
     )
+    websocket_stt_partial_interval_ms: int = int(
+        os.getenv("WEBSOCKET_STT_PARTIAL_INTERVAL_MS", "1000")
+    )
+    websocket_stt_min_audio_ms: int = int(
+        os.getenv("WEBSOCKET_STT_MIN_AUDIO_MS", "500")
+    )
+    websocket_stt_vad_threshold: float = float(
+        os.getenv("WEBSOCKET_STT_VAD_THRESHOLD", "0.015")
+    )
+    websocket_stt_vad_silence_ms: int = int(
+        os.getenv("WEBSOCKET_STT_VAD_SILENCE_MS", "700")
+    )
+    websocket_tts_max_buffer_chars: int = int(
+        os.getenv("WEBSOCKET_TTS_MAX_BUFFER_CHARS", "4000")
+    )
+    websocket_tts_flush_chars: int = int(
+        os.getenv("WEBSOCKET_TTS_FLUSH_CHARS", "240")
+    )
 
     base_dir: Path = Path(__file__).resolve().parent.parent
     output_dir: Path = Path(os.getenv("OUTPUT_DIR", "outputs"))

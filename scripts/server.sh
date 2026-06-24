@@ -51,6 +51,22 @@ check_app() {
   "$VENV_PYTHON" -m compileall app
 }
 
+run_tests() {
+  ensure_venv
+
+  echo "Running local TTS gateway test suite..."
+  echo "Test discovery: tests/test*.py"
+  echo ""
+
+  "$VENV_PYTHON" -m unittest discover \
+    --start-directory tests \
+    --pattern "test*.py" \
+    --verbose
+
+  echo ""
+  echo "All tests passed."
+}
+
 health() {
   curl -s "${BASE_URL}/health" | jq
 }
@@ -132,6 +148,10 @@ case "$1" in
     check_app
     ;;
 
+  test | tests)
+    run_tests
+    ;;
+
   health)
     health
     ;;
@@ -161,6 +181,7 @@ case "$1" in
     echo "  ./scripts/server.sh prod             Same as start"
     echo "  ./scripts/server.sh check            Compile-check Python files"
     echo "  ./scripts/server.sh build            Same as check"
+    echo "  ./scripts/server.sh test             Run all tests with verbose results"
     echo "  ./scripts/server.sh health           Check API health endpoint"
     echo "  ./scripts/server.sh test-tts         Generate speech.wav from TTS endpoint"
     echo "  ./scripts/server.sh test-stt         Send speech.wav to STT endpoint"

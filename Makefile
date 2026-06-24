@@ -1,4 +1,4 @@
-.PHONY: install dev start serve prod check build health test-tts test-stt record-stt cache-stt
+.PHONY: install dev start serve prod local check build test tests health test-tts test-stt record-stt cache-stt
 
 install:
 	./scripts/server.sh install
@@ -15,11 +15,18 @@ serve:
 prod:
 	./scripts/server.sh prod
 
+local: check test
+
 check:
 	./scripts/server.sh check
 
 build:
 	./scripts/server.sh build
+
+test:
+	./scripts/server.sh test
+
+tests: test
 
 health:
 	./scripts/server.sh health

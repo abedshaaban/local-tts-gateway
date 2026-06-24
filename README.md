@@ -278,7 +278,7 @@ afplay stream.wav
 
 The service also supports persistent WebSocket connections for TTS and STT.
 
-### TTS WebSocket
+### One-shot TTS WebSocket
 
 Connect to `ws://127.0.0.1:47829/ws/tts`, then send:
 
@@ -297,7 +297,37 @@ The server responds with a JSON `start` message describing the audio, one or
 more binary PCM frames, then a JSON `complete` message. Audio is mono
 `float32le` at 24 kHz. The connection stays open for additional requests.
 
-### STT WebSocket
+### Incremental text-to-speech
+
+Use this protocol when text arrives token by token from an AI model:
+
+```json
+{"type":"stream_start","request_id":"tts-live-1","voice":"af_heart","speed":1,"lang_code":"a"}
+{"type":"text_delta","text":"Hello "}
+{"type":"text_delta","text":"from the model. "}
+{"type":"text_delta","text":"This is streamed speech."}
+{"type":"end"}
+```
+
+The gateway buffers incomplete text and starts synthesis at sentence boundaries.
+If no sentence boundary arrives, it flushes around `WEBSOCKET_TTS_FLUSH_CHARS`
+characters. Send `{"type":"flush"}` to speak the current buffer immediately or
+`{"type":"cancel"}` to stop the session.
+
+Server messages:
+
+- `ready` — the text stream can begin.
+- `segment_start` — a buffered text segment is being synthesized.
+- Binary frames — mono `float32le` PCM at 24 kHz.
+- `segment_complete` — one text segment finished.
+- `complete` or `cancelled` — the stream ended.
+- `error` — validation or synthesis failed.
+
+Only one incremental TTS session is active per WebSocket. The queue is bounded,
+so a client naturally receives backpressure if it sends text faster than the
+local model can synthesize it.
+
+### Upload-and-transcribe STT WebSocket
 
 Connect to `ws://127.0.0.1:47829/ws/stt`, then:
 
@@ -311,6 +341,53 @@ Supported formats are `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, and `webm`.
 Send `{"type":"abort"}` to discard an active upload. The default upload limit
 is 100 MiB and can be changed with `WEBSOCKET_STT_MAX_BYTES`.
 
+### Realtime speech-to-text
+
+For reliable live microphone transcription, send mono signed 16-bit little
+endian PCM at 16 kHz:
+
+```json
+{
+  "type": "start",
+  "request_id": "stt-live-1",
+  "format": "pcm_s16le",
+  "sample_rate": 16000,
+  "channels": 1,
+  "realtime": true
+}
+```
+
+After receiving `ready`, send binary PCM frames continuously. The gateway emits:
+
+- `speech_started` and `speech_stopped` from energy-based voice activity
+  detection.
+- `partial_transcript` while audio is still arriving.
+- `final_transcript` after detected silence and after `{"type":"end"}`.
+
+Send `{"type":"commit"}` to request an immediate partial transcript,
+`{"type":"end"}` to finish and receive the final result, or
+`{"type":"abort"}` to discard the session.
+
+Realtime mode also accepts `wav`, `webm`, `mp3`, `m4a`, `aac`, `flac`, and
+`ogg`. Partial decoding of a growing compressed container depends on whether
+FFmpeg can decode the current container boundary, so raw PCM is recommended.
+VAD events are available only for raw PCM.
+
+The installed STT engines are file-oriented. Realtime mode therefore takes
+periodic snapshots of the accumulated audio and retranscribes them instead of
+maintaining a native decoder state. This provides live partial results while
+retaining the existing Parakeet/Whisper engine fallback behavior, at the cost
+of increasing work as a session grows.
+
+Optional `start` fields:
+
+| Field | Default | Meaning |
+|---|---:|---|
+| `partial_interval_ms` | `1000` | Delay between automatic partial transcripts |
+| `min_audio_ms` | `500` | Audio required before automatic transcription |
+| `vad_threshold` | `0.015` | Normalized PCM RMS threshold for speech |
+| `vad_silence_ms` | `700` | Silence required to finalize an utterance |
+
 ## API endpoints
 
 | Method | Path | Description |
@@ -323,8 +400,23 @@ is 100 MiB and can be changed with `WEBSOCKET_STT_MAX_BYTES`.
 | POST | `/tts/stream` | Stream speech as chunked WAV |
 | POST | `/tts/stream/pcm` | Stream speech as raw PCM (float32le) |
 | POST | `/stt/text` | Transcribe uploaded audio, return JSON |
-| WS | `/ws/tts` | Stream synthesized raw PCM frames |
-| WS | `/ws/stt` | Upload audio frames and receive a transcript |
+| WS | `/ws/tts` | One-shot or incremental-text TTS with streamed PCM output |
+| WS | `/ws/stt` | Upload audio or receive live partial/final transcripts |
+
+## Tests
+
+Run the full suite with individual test names and a final pass/fail overview:
+
+```bash
+make test
+```
+
+`make tests` is an alias. Running `make test tests` still executes the suite
+only once. To compile-check the application and then run the suite:
+
+```bash
+make local
+```
 
 ### Request body
 

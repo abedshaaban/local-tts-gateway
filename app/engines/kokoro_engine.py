@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import List, Generator
 import logging
+import threading
 import uuid
 
 import soundfile as sf
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 class KokoroEngine:
     def __init__(self, lang_code: str = "a"):
         self.lang_code = lang_code
+        self._generation_lock = threading.Lock()
 
         try:
             self.pipeline = KPipeline(
@@ -44,19 +46,19 @@ class KokoroEngine:
         if not output_prefix:
             output_prefix = f"tts_{uuid.uuid4()}"
 
-        generator = self.pipeline(
-            text,
-            voice=voice,
-            speed=speed,
-            split_pattern=split_pattern,
-        )
-
         output_files: List[Path] = []
+        with self._generation_lock:
+            generator = self.pipeline(
+                text,
+                voice=voice,
+                speed=speed,
+                split_pattern=split_pattern,
+            )
 
-        for index, (_graphemes, _phonemes, audio) in enumerate(generator):
-            output_path = settings.output_dir / f"{output_prefix}_{index}.wav"
-            sf.write(output_path, audio, settings.sample_rate)
-            output_files.append(output_path)
+            for index, (_graphemes, _phonemes, audio) in enumerate(generator):
+                output_path = settings.output_dir / f"{output_prefix}_{index}.wav"
+                sf.write(output_path, audio, settings.sample_rate)
+                output_files.append(output_path)
 
         return output_files
 
@@ -67,16 +69,24 @@ class KokoroEngine:
         speed: float,
         split_pattern: str = r"\n+",
     ) -> Generator[bytes, None, None]:
-        generator = self.pipeline(
-            text,
-            voice=voice,
-            speed=speed,
-            split_pattern=split_pattern,
-        )
+        with self._generation_lock:
+            generator = self.pipeline(
+                text,
+                voice=voice,
+                speed=speed,
+                split_pattern=split_pattern,
+            )
 
-        for index, (_graphemes, _phonemes, audio) in enumerate(generator):
+        index = 0
+        while True:
+            with self._generation_lock:
+                try:
+                    _graphemes, _phonemes, audio = next(generator)
+                except StopIteration:
+                    return
             logger.debug("Streaming WAV chunk %s", index)
             yield audio_array_to_wav_bytes(audio)
+            index += 1
 
     def stream_pcm_chunks(
         self,
@@ -85,13 +95,21 @@ class KokoroEngine:
         speed: float,
         split_pattern: str = r"\n+",
     ) -> Generator[bytes, None, None]:
-        generator = self.pipeline(
-            text,
-            voice=voice,
-            speed=speed,
-            split_pattern=split_pattern,
-        )
+        with self._generation_lock:
+            generator = self.pipeline(
+                text,
+                voice=voice,
+                speed=speed,
+                split_pattern=split_pattern,
+            )
 
-        for index, (_graphemes, _phonemes, audio) in enumerate(generator):
+        index = 0
+        while True:
+            with self._generation_lock:
+                try:
+                    _graphemes, _phonemes, audio = next(generator)
+                except StopIteration:
+                    return
             logger.debug("Streaming PCM chunk %s", index)
             yield audio_array_to_pcm_bytes(audio)
+            index += 1

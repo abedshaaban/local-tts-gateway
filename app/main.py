@@ -79,6 +79,9 @@ def runtime_info():
         "output_dir": str(settings.output_dir),
         "sample_rate": settings.sample_rate,
         "websocket_stt_max_bytes": settings.websocket_stt_max_bytes,
+        "websocket_stt_partial_interval_ms": settings.websocket_stt_partial_interval_ms,
+        "websocket_stt_min_audio_ms": settings.websocket_stt_min_audio_ms,
+        "websocket_tts_max_buffer_chars": settings.websocket_tts_max_buffer_chars,
     }
 
 

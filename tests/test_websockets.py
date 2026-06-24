@@ -116,6 +116,239 @@ class WebSocketTests(unittest.TestCase):
             self.assertEqual(error["type"], "error")
             self.assertEqual(error["code"], "upload_not_started")
 
+    def test_tts_accepts_incremental_text_and_streams_audio(self):
+        generated_text = []
+
+        def stream_pcm(**kwargs):
+            generated_text.append(kwargs["text"])
+            return iter([kwargs["text"].encode()])
+
+        with patch("app.main.tts_service.stream_pcm", side_effect=stream_pcm):
+            with self.client.websocket_connect("/ws/tts") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "stream_start",
+                        "request_id": "tts-live",
+                    }
+                )
+                ready = websocket.receive_json()
+                self.assertEqual(ready["type"], "ready")
+                self.assertEqual(ready["request_id"], "tts-live")
+
+                websocket.send_json({"type": "text_delta", "text": "Hello "})
+                websocket.send_json(
+                    {"type": "text_delta", "text": "from a streamed model. "}
+                )
+
+                segment_start = websocket.receive_json()
+                self.assertEqual(segment_start["type"], "segment_start")
+                self.assertEqual(
+                    segment_start["text"],
+                    "Hello from a streamed model.",
+                )
+                self.assertEqual(
+                    websocket.receive_bytes(),
+                    b"Hello from a streamed model.",
+                )
+                self.assertEqual(
+                    websocket.receive_json()["type"],
+                    "segment_complete",
+                )
+
+                websocket.send_json({"type": "text_delta", "text": "Last words"})
+                websocket.send_json({"type": "end"})
+                self.assertEqual(websocket.receive_json()["type"], "segment_start")
+                self.assertEqual(websocket.receive_bytes(), b"Last words")
+                self.assertEqual(
+                    websocket.receive_json()["type"],
+                    "segment_complete",
+                )
+                complete = websocket.receive_json()
+                self.assertEqual(complete["type"], "complete")
+                self.assertEqual(complete["segments"], 2)
+
+        self.assertEqual(
+            generated_text,
+            ["Hello from a streamed model.", "Last words"],
+        )
+
+    def test_realtime_stt_emits_partial_and_final_transcripts(self):
+        calls = []
+
+        def transcribe(path):
+            calls.append(path)
+            return {
+                "text": f"version {len(calls)}",
+                "language": "en",
+                "engine_used": "test",
+                "duration_seconds": 0.01,
+            }
+
+        with patch("app.main.stt_service.transcribe_file", side_effect=transcribe):
+            with self.client.websocket_connect("/ws/stt") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "start",
+                        "request_id": "stt-live",
+                        "format": "pcm_s16le",
+                        "sample_rate": 16000,
+                        "channels": 1,
+                        "realtime": True,
+                        "partial_interval_ms": 60000,
+                        "min_audio_ms": 1,
+                        "vad_threshold": 1,
+                    }
+                )
+                ready = websocket.receive_json()
+                self.assertTrue(ready["realtime"])
+
+                websocket.send_bytes(b"\x00\x00" * 160)
+                websocket.send_json({"type": "commit"})
+                partial = websocket.receive_json()
+                self.assertEqual(partial["type"], "partial_transcript")
+                self.assertEqual(partial["text"], "version 1")
+
+                websocket.send_json({"type": "end"})
+                final = websocket.receive_json()
+                self.assertEqual(final["type"], "final_transcript")
+                self.assertEqual(final["text"], "version 2")
+
+        self.assertEqual(len(calls), 2)
+
+    def test_realtime_stt_emits_voice_activity_events(self):
+        result = {
+            "text": "spoken words",
+            "language": "en",
+            "engine_used": "test",
+            "duration_seconds": 0.01,
+        }
+
+        with patch("app.main.stt_service.transcribe_file", return_value=result):
+            with self.client.websocket_connect("/ws/stt") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "start",
+                        "request_id": "stt-vad",
+                        "format": "pcm_s16le",
+                        "sample_rate": 16000,
+                        "realtime": True,
+                        "partial_interval_ms": 60000,
+                        "min_audio_ms": 1,
+                        "vad_threshold": 0.01,
+                        "vad_silence_ms": 50,
+                    }
+                )
+                websocket.receive_json()
+
+                websocket.send_bytes(b"\xff\x7f" * 1600)
+                self.assertEqual(
+                    websocket.receive_json()["type"],
+                    "speech_started",
+                )
+
+                websocket.send_bytes(b"\x00\x00" * 1600)
+                self.assertEqual(
+                    websocket.receive_json()["type"],
+                    "speech_stopped",
+                )
+                self.assertEqual(
+                    websocket.receive_json()["type"],
+                    "final_transcript",
+                )
+
+                websocket.send_json({"type": "abort"})
+                self.assertEqual(websocket.receive_json()["type"], "aborted")
+
+    def test_realtime_stt_automatically_emits_partials(self):
+        result = {
+            "text": "automatic partial",
+            "language": "en",
+            "engine_used": "test",
+            "duration_seconds": 0.01,
+        }
+
+        with patch("app.main.stt_service.transcribe_file", return_value=result):
+            with self.client.websocket_connect("/ws/stt") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "start",
+                        "request_id": "stt-auto",
+                        "format": "pcm_s16le",
+                        "sample_rate": 16000,
+                        "realtime": True,
+                        "partial_interval_ms": 100,
+                        "min_audio_ms": 1,
+                        "vad_threshold": 1,
+                    }
+                )
+                websocket.receive_json()
+                websocket.send_bytes(b"\x00\x00" * 160)
+
+                partial = websocket.receive_json()
+                self.assertEqual(partial["type"], "partial_transcript")
+                self.assertEqual(partial["text"], "automatic partial")
+
+                websocket.send_json({"type": "abort"})
+                self.assertEqual(websocket.receive_json()["type"], "aborted")
+
+    def test_realtime_stt_reports_engine_failures_without_closing_socket(self):
+        with patch(
+            "app.main.stt_service.transcribe_file",
+            side_effect=RuntimeError("model failed"),
+        ):
+            with self.client.websocket_connect("/ws/stt") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "start",
+                        "request_id": "stt-error",
+                        "format": "pcm_s16le",
+                        "realtime": True,
+                        "partial_interval_ms": 60000,
+                        "min_audio_ms": 1,
+                        "vad_threshold": 1,
+                    }
+                )
+                websocket.receive_json()
+                websocket.send_bytes(b"\x00\x00" * 160)
+                websocket.send_json({"type": "end"})
+
+                error = websocket.receive_json()
+                self.assertEqual(error["type"], "error")
+                self.assertEqual(error["code"], "transcription_failed")
+
+    def test_incremental_tts_recovers_after_synthesis_failure(self):
+        with patch(
+            "app.main.tts_service.stream_pcm",
+            side_effect=RuntimeError("model failed"),
+        ):
+            with self.client.websocket_connect("/ws/tts") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "stream_start",
+                        "request_id": "tts-error",
+                    }
+                )
+                websocket.receive_json()
+                websocket.send_json(
+                    {"type": "text_delta", "text": "This will fail. "}
+                )
+
+                self.assertEqual(websocket.receive_json()["type"], "segment_start")
+                error = websocket.receive_json()
+                self.assertEqual(error["type"], "error")
+                self.assertEqual(error["code"], "synthesis_failed")
+
+                websocket.send_json({"type": "end"})
+                websocket.send_json(
+                    {
+                        "type": "stream_start",
+                        "request_id": "tts-next",
+                    }
+                )
+                ready = websocket.receive_json()
+                self.assertEqual(ready["type"], "ready")
+                self.assertEqual(ready["request_id"], "tts-next")
+
 
 if __name__ == "__main__":
     unittest.main()
