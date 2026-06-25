@@ -600,6 +600,7 @@ def create_websocket_router(
                             stt_service.transcribe_file,
                             completed_path,
                         )
+                        stt_service.save_transcription(result)
                         await send_json(
                             {
                                 "type": "transcription",

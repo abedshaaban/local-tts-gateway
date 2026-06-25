@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import List
 from io import BytesIO
+import os
 import wave
 
 import numpy as np
@@ -25,6 +26,12 @@ def combine_wav_files(input_files: List[Path], output_file: Path) -> Path:
         for file in input_files:
             with wave.open(str(file), "rb") as input_wav:
                 output_wav.writeframes(input_wav.readframes(input_wav.getnframes()))
+
+    for file in input_files:
+        try:
+            os.remove(file)
+        except FileNotFoundError:
+            pass
 
     return output_file
 

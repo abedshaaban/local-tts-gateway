@@ -37,6 +37,7 @@ def convert_wav(
     *,
     sample_rate: int | None = None,
     bitrate_kbps: int | None = None,
+    output_dir: Path | None = None,
 ) -> Path:
     if shutil.which("ffmpeg") is None:
         raise RuntimeError(
@@ -46,6 +47,7 @@ def convert_wav(
     output = tempfile.NamedTemporaryFile(
         delete=False,
         suffix=f".{response_format}",
+        dir=output_dir,
     )
     output.close()
     codec_args = {

@@ -525,7 +525,31 @@ Configure which canonical models are active without changing routes:
 DEFAULT_TTS_MODEL=local-tts
 DEFAULT_STT_MODEL=local-stt
 ENABLED_MODELS=local-tts,local-stt
+OUTPUT_DIR=outputs
+SAVE_GENERATED_AUDIO=false
+SAVE_TRANSCRIPTIONS=false
 ```
+
+### Optional output retention
+
+The gateway returns generated audio and transcription responses whether or not
+server-side retention is enabled.
+
+```env
+OUTPUT_DIR=outputs
+SAVE_GENERATED_AUDIO=false
+SAVE_TRANSCRIPTIONS=false
+```
+
+- `SAVE_GENERATED_AUDIO=true` retains generated file responses in
+  `OUTPUT_DIR`. When false, temporary server files are deleted after delivery.
+- `SAVE_TRANSCRIPTIONS=true` writes each completed transcription as JSON under
+  `OUTPUT_DIR/transcriptions`.
+- `POST /tts/file` always saves its output because persistence is that
+  endpoint's explicit purpose.
+- Streaming TTS endpoints do not create archival files.
+- A client command such as `curl --output speech.wav` saves its own local copy
+  independently of these server settings.
 
 To add another local model later:
 

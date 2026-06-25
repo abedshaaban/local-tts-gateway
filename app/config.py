@@ -71,6 +71,14 @@ class Settings(BaseModel):
 
     base_dir: Path = Path(__file__).resolve().parent.parent
     output_dir: Path = Path(os.getenv("OUTPUT_DIR", "outputs"))
+    save_generated_audio: bool = str_to_bool(
+        os.getenv("SAVE_GENERATED_AUDIO"),
+        False,
+    )
+    save_transcriptions: bool = str_to_bool(
+        os.getenv("SAVE_TRANSCRIPTIONS"),
+        False,
+    )
 
     kokoro_repo_id: str = os.getenv("KOKORO_REPO_ID", "hexgrad/Kokoro-82M")
     kokoro_model_dir: Path = Path(os.getenv("KOKORO_MODEL_DIR", "models/kokoro"))
@@ -82,5 +90,7 @@ class Settings(BaseModel):
 settings = Settings()
 
 settings.output_dir.mkdir(parents=True, exist_ok=True)
+if settings.save_transcriptions:
+    (settings.output_dir / "transcriptions").mkdir(parents=True, exist_ok=True)
 settings.kokoro_model_dir.mkdir(parents=True, exist_ok=True)
 settings.hf_home.mkdir(parents=True, exist_ok=True)

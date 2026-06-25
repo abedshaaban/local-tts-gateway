@@ -131,9 +131,18 @@ def create_openai_compat_router(
             )
             output_path = wav_path
             if response_format != "wav":
-                output_path = convert_wav(wav_path, response_format)
+                output_path = convert_wav(
+                    wav_path,
+                    response_format,
+                    output_dir=(
+                        settings.output_dir
+                        if settings.save_generated_audio
+                        else None
+                    ),
+                )
                 background_tasks.add_task(remove_file, wav_path)
-            background_tasks.add_task(remove_file, output_path)
+            if not settings.save_generated_audio:
+                background_tasks.add_task(remove_file, output_path)
             return FileResponse(
                 output_path,
                 media_type=MEDIA_TYPES[response_format],
@@ -201,6 +210,7 @@ def create_openai_compat_router(
                 remove_file(temp_path)
 
         text = result.get("text", "")
+        stt_service.save_transcription(result, model=model)
         headers = {
             "X-Local-Prompt-Ignored": str(bool(prompt)).lower(),
             "X-Local-Language-Hint-Ignored": str(bool(language)).lower(),

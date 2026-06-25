@@ -293,6 +293,7 @@ class RealtimeSTTSession:
                 stable_text, unstable_text = self._stabilizer.update(text)
             else:
                 stable_text, unstable_text = self._stabilizer.finalize(text)
+                self.service.save_transcription(result)
             self._revision += 1
             await self.send_event(
                 {

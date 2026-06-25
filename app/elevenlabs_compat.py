@@ -189,9 +189,15 @@ def create_elevenlabs_compat_router(
                     codec,
                     sample_rate=sample_rate,
                     bitrate_kbps=bitrate,
+                    output_dir=(
+                        settings.output_dir
+                        if settings.save_generated_audio
+                        else None
+                    ),
                 )
                 background_tasks.add_task(remove_file, wav_path)
-            background_tasks.add_task(remove_file, output_path)
+            if not settings.save_generated_audio:
+                background_tasks.add_task(remove_file, output_path)
         except Exception as error:
             raise HTTPException(
                 status_code=500,

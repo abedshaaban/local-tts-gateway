@@ -54,6 +54,7 @@ from app.schemas import TTSRequest, TTSFileResponse, STTResponse
 from app.services.tts_service import TTSService
 from app.services.stt_service import STTService
 from app.conversation_routes import create_conversation_router
+from app.audio_output import remove_file
 from app.elevenlabs_compat import create_elevenlabs_compat_router
 from app.model_registry import build_default_registry
 from app.openai_compat import create_openai_compat_router
@@ -116,6 +117,8 @@ def runtime_info():
         "default_tts_model": settings.default_tts_model,
         "default_stt_model": settings.default_stt_model,
         "enabled_models": [model.id for model in model_registry.list_models()],
+        "save_generated_audio": settings.save_generated_audio,
+        "save_transcriptions": settings.save_transcriptions,
     }
 
 
@@ -137,7 +140,7 @@ def get_voices():
 
 
 @app.post("/tts/wav")
-def generate_tts_wav(payload: TTSRequest):
+def generate_tts_wav(payload: TTSRequest, background_tasks: BackgroundTasks):
     try:
         output_path = tts_service.generate_wav(
             text=payload.text,
@@ -148,10 +151,13 @@ def generate_tts_wav(payload: TTSRequest):
             model=payload.model,
         )
 
+        if not settings.save_generated_audio:
+            background_tasks.add_task(remove_file, output_path)
         return FileResponse(
             path=output_path,
             media_type="audio/wav",
             filename="speech.wav",
+            background=background_tasks,
         )
 
     except Exception as error:
@@ -266,6 +272,7 @@ async def speech_to_text(
             temp_path = temp.name
 
         result = stt_service.transcribe_file(temp_path, model=model)
+        stt_service.save_transcription(result, model=model)
         return result
 
     except Exception as error:
@@ -289,6 +296,8 @@ def play_tts(payload: TTSRequest, background_tasks: BackgroundTasks):
         )
 
         background_tasks.add_task(subprocess.run, ["afplay", str(output_path)])
+        if not settings.save_generated_audio:
+            background_tasks.add_task(remove_file, output_path)
 
         return {
             "ok": True,

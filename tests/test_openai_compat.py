@@ -90,6 +90,35 @@ class OpenAICompatibilityTests(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
 
+    def test_speech_wav_is_retained_when_enabled(self):
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as audio:
+            audio.write(b"RIFFsaved")
+            path = audio.name
+
+        try:
+            with (
+                patch(
+                    "app.main.tts_service.generate_wav",
+                    return_value=path,
+                ),
+                patch("app.openai_compat.settings.save_generated_audio", True),
+            ):
+                response = self.client.post(
+                    "/v1/audio/speech",
+                    json={
+                        "model": "local-tts",
+                        "input": "Hello",
+                        "voice": "af_heart",
+                        "response_format": "wav",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(os.path.exists(path))
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
 
 if __name__ == "__main__":
     unittest.main()
