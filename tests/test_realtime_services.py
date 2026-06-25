@@ -3,7 +3,7 @@ import unittest
 import wave
 from unittest.mock import patch
 
-from app.services.realtime_stt import RealtimeSTTSession
+from app.services.realtime_stt import RealtimeSTTSession, TranscriptStabilizer
 from app.services.realtime_tts import take_ready_text
 
 
@@ -62,6 +62,47 @@ class RealtimeSTTSnapshotTests(unittest.IsolatedAsyncioTestCase):
             if snapshot_path and os.path.exists(snapshot_path):
                 os.remove(snapshot_path)
             await session.close()
+
+    async def test_pcm_snapshot_uses_bounded_rolling_window(self):
+        async def send_event(_event):
+            pass
+
+        session = RealtimeSTTSession(
+            service=object(),
+            send_event=send_event,
+            request_id="snapshot-window",
+            audio_format="pcm_s16le",
+            sample_rate=1000,
+            channels=1,
+            rolling_window_ms=1000,
+            partial_interval_ms=60000,
+            min_audio_ms=1,
+        )
+        snapshot_path = None
+        try:
+            await session.append(b"\x01\x00" * 2000)
+            snapshot_path = session._create_snapshot()
+            with wave.open(snapshot_path, "rb") as snapshot:
+                self.assertEqual(snapshot.getnframes(), 1000)
+        finally:
+            if snapshot_path and os.path.exists(snapshot_path):
+                os.remove(snapshot_path)
+            await session.close()
+
+
+class TranscriptStabilizerTests(unittest.TestCase):
+    def test_reports_stable_and_unstable_words(self):
+        stabilizer = TranscriptStabilizer()
+
+        self.assertEqual(stabilizer.update("hello local"), ("", "hello local"))
+        self.assertEqual(
+            stabilizer.update("hello local gateway"),
+            ("hello local", "gateway"),
+        )
+        self.assertEqual(
+            stabilizer.finalize("hello local gateway"),
+            ("hello local gateway", ""),
+        )
 
 
 if __name__ == "__main__":

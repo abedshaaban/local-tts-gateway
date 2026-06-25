@@ -364,6 +364,12 @@ After receiving `ready`, send binary PCM frames continuously. The gateway emits:
 - `partial_transcript` while audio is still arriving.
 - `final_transcript` after detected silence and after `{"type":"end"}`.
 
+Partial transcript events include:
+
+- `stable_text` — words shared with the previous revision.
+- `unstable_text` — the provisional suffix that may still change.
+- `window_start_ms` and `window_end_ms` — the bounded audio window used.
+
 Send `{"type":"commit"}` to request an immediate partial transcript,
 `{"type":"end"}` to finish and receive the final result, or
 `{"type":"abort"}` to discard the session.
@@ -387,6 +393,134 @@ Optional `start` fields:
 | `min_audio_ms` | `500` | Audio required before automatic transcription |
 | `vad_threshold` | `0.015` | Normalized PCM RMS threshold for speech |
 | `vad_silence_ms` | `700` | Silence required to finalize an utterance |
+| `rolling_window_ms` | `15000` | Maximum raw PCM window retranscribed for partials |
+
+## Unified conversation WebSocket
+
+`ws://127.0.0.1:47829/ws/conversation` combines microphone input, live
+transcription, streamed TTS output, cancellation, and barge-in.
+
+Start a session:
+
+```json
+{
+  "type": "session.start",
+  "config": {
+    "format": "pcm_s16le",
+    "sample_rate": 16000,
+    "channels": 1,
+    "barge_in": true,
+    "voice": "af_heart"
+  }
+}
+```
+
+Send microphone audio as binary PCM frames. To speak a complete response:
+
+```json
+{"type":"response.create","response_id":"reply-1","text":"Hello from the assistant."}
+```
+
+For model token streams:
+
+```json
+{"type":"response.start","response_id":"reply-2"}
+{"type":"response.text.delta","text":"This text "}
+{"type":"response.text.delta","text":"arrives incrementally."}
+{"type":"response.text.done"}
+```
+
+Important server events:
+
+- `conversation.transcript.partial` and `conversation.transcript.final`
+- `input_audio_buffer.speech_started` and `.speech_stopped`
+- `response.created`, `response.audio.segment_start`, and `response.audio.done`
+- `response.interrupted` when user speech cancels active TTS
+
+Binary server frames are mono `float32le` PCM at 24 kHz. Supported controls
+include `input_audio_buffer.commit`, `input_audio_buffer.clear`,
+`response.flush`, `response.cancel`, and `session.end`.
+
+## OpenAI-compatible API subset
+
+The following local routes use OpenAI-compatible request shapes:
+
+| Method | Path | Supported behavior |
+|---|---|---|
+| GET | `/v1/models` | Lists `local-tts` and `local-stt` |
+| GET | `/v1/models/{id}` | Retrieves local models and accepted aliases |
+| POST | `/v1/audio/speech` | `mp3`, `opus`, `aac`, `flac`, `wav`, or 24 kHz `pcm_s16le` |
+| POST | `/v1/audio/transcriptions` | Multipart audio; `json`, `text`, or `verbose_json` |
+
+Accepted speech model aliases include `tts-1`, `tts-1-hd`, and
+`gpt-4o-mini-tts`. Accepted transcription aliases include `whisper-1`,
+`gpt-4o-mini-transcribe`, and `gpt-4o-transcribe`. They all run the configured
+local engines; they do not download or call those hosted models.
+
+OpenAI voice names are mapped to local Kokoro voices. A native Kokoro voice
+such as `af_heart` can also be passed directly. Speech `instructions`,
+transcription `prompt`, and per-request language hints are accepted for client
+compatibility but currently reported as ignored through response headers.
+
+Example:
+
+```bash
+curl http://127.0.0.1:47829/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","voice":"alloy","input":"Local speech.","response_format":"mp3"}' \
+  --output speech.mp3
+
+curl http://127.0.0.1:47829/v1/audio/transcriptions \
+  -F model=whisper-1 \
+  -F file=@speech.mp3
+```
+
+## Client SDKs
+
+### TypeScript/browser
+
+```bash
+cd sdk/typescript
+npm install
+npm run build
+```
+
+```ts
+import { LocalTTSGateway } from "@local-tts-gateway/client";
+
+const gateway = new LocalTTSGateway();
+const conversation = gateway.conversation({
+  onEvent: (event) => console.log(event),
+});
+
+await conversation.connect();
+await conversation.startMicrophone();
+conversation.createResponse("The gateway can speak this response.");
+```
+
+The browser client performs microphone capture, downsampling to 16 kHz
+`pcm_s16le`, PCM playback, interruption cleanup, cancellation, and reconnects.
+Browser HTTP calls are allowed by default from `localhost`, `127.0.0.1`, and
+local `file://` pages. Override `CORS_ALLOW_ORIGIN_REGEX` when integrating a
+different local origin.
+
+### Python
+
+```bash
+pip install -e sdk/python
+```
+
+```python
+from local_tts_gateway import LocalTTSGateway
+
+gateway = LocalTTSGateway()
+audio = gateway.speech("Hello locally.", response_format="wav")
+open("speech.wav", "wb").write(audio)
+print(gateway.transcribe("speech.wav"))
+```
+
+`ConversationClient` provides async unified-WebSocket events, binary audio
+input/output, response text streaming, and reconnect behavior.
 
 ## API endpoints
 
@@ -402,6 +536,8 @@ Optional `start` fields:
 | POST | `/stt/text` | Transcribe uploaded audio, return JSON |
 | WS | `/ws/tts` | One-shot or incremental-text TTS with streamed PCM output |
 | WS | `/ws/stt` | Upload audio or receive live partial/final transcripts |
+| WS | `/ws/conversation` | Unified STT/TTS session with barge-in |
+| GET/POST | `/v1/*` | OpenAI-compatible models and audio subset |
 
 ## Tests
 
@@ -412,7 +548,8 @@ make test
 ```
 
 `make tests` is an alias. Running `make test tests` still executes the suite
-only once. To compile-check the application and then run the suite:
+only once. To compile-check the application, run tests, and type-check both
+SDKs:
 
 ```bash
 make local

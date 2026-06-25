@@ -40,6 +40,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.offline import configure_offline_runtime
@@ -49,17 +50,27 @@ configure_offline_runtime()
 from app.schemas import TTSRequest, TTSFileResponse, STTResponse
 from app.services.tts_service import TTSService
 from app.services.stt_service import STTService
+from app.conversation_routes import create_conversation_router
+from app.openai_compat import create_openai_compat_router
 from app.websocket_routes import create_websocket_router
 
 app = FastAPI(
     title="Local TTS Gateway",
     description="Local Kokoro-powered text-to-speech and speech-to-text service",
-    version="0.2.0",
+    version="0.3.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=settings.cors_allow_origin_regex,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 tts_service = TTSService()
 stt_service = STTService()
 app.include_router(create_websocket_router(tts_service, stt_service))
+app.include_router(create_conversation_router(tts_service, stt_service))
+app.include_router(create_openai_compat_router(tts_service, stt_service))
 
 
 @app.get("/health")
@@ -81,7 +92,10 @@ def runtime_info():
         "websocket_stt_max_bytes": settings.websocket_stt_max_bytes,
         "websocket_stt_partial_interval_ms": settings.websocket_stt_partial_interval_ms,
         "websocket_stt_min_audio_ms": settings.websocket_stt_min_audio_ms,
+        "websocket_stt_rolling_window_ms": settings.websocket_stt_rolling_window_ms,
         "websocket_tts_max_buffer_chars": settings.websocket_tts_max_buffer_chars,
+        "conversation_barge_in": settings.conversation_barge_in,
+        "cors_allow_origin_regex": settings.cors_allow_origin_regex,
     }
 
 

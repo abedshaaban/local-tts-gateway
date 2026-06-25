@@ -18,6 +18,41 @@ PCM_FORMATS = {"pcm_s16le", "s16le"}
 UPLOAD_FORMATS = {"wav", "mp3", "m4a", "aac", "flac", "ogg", "webm"}
 
 
+def common_word_prefix(left: str, right: str) -> str:
+    left_words = left.split()
+    right_words = right.split()
+    count = 0
+    for left_word, right_word in zip(left_words, right_words):
+        if left_word != right_word:
+            break
+        count += 1
+    return " ".join(right_words[:count])
+
+
+class TranscriptStabilizer:
+    def __init__(self):
+        self.previous = ""
+        self.stable = ""
+
+    def update(self, text: str) -> tuple[str, str]:
+        shared = common_word_prefix(self.previous, text)
+        self.stable = shared
+        self.previous = text
+
+        stable_words = len(self.stable.split())
+        unstable = " ".join(text.split()[stable_words:])
+        return self.stable, unstable
+
+    def finalize(self, text: str) -> tuple[str, str]:
+        self.previous = text
+        self.stable = text
+        return text, ""
+
+    def reset(self):
+        self.previous = ""
+        self.stable = ""
+
+
 class RealtimeSTTSession:
     def __init__(
         self,
@@ -31,6 +66,7 @@ class RealtimeSTTSession:
         min_audio_ms: int | None = None,
         vad_threshold: float | None = None,
         vad_silence_ms: int | None = None,
+        rolling_window_ms: int | None = None,
     ):
         self.service = service
         self.send_event = send_event
@@ -58,6 +94,11 @@ class RealtimeSTTSession:
             if vad_silence_ms is not None
             else settings.websocket_stt_vad_silence_ms
         )
+        self.rolling_window_ms = (
+            rolling_window_ms
+            if rolling_window_ms is not None
+            else settings.websocket_stt_rolling_window_ms
+        )
 
         suffix = ".pcm" if audio_format in PCM_FORMATS else f".{audio_format}"
         self._file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
@@ -72,6 +113,11 @@ class RealtimeSTTSession:
         self._partial_task: asyncio.Task | None = None
         self._speech_active = False
         self._silence_ms = 0.0
+        self._utterance_start_byte = 0
+        self._last_append_start_byte = 0
+        self._snapshot_start_ms = 0.0
+        self._snapshot_end_ms = 0.0
+        self._stabilizer = TranscriptStabilizer()
 
     @property
     def bytes_per_ms(self) -> float | None:
@@ -94,6 +140,7 @@ class RealtimeSTTSession:
         if self.byte_count + len(data) > settings.websocket_stt_max_bytes:
             raise ValueError("Audio upload exceeds the configured size limit.")
 
+        self._last_append_start_byte = self.byte_count
         self._file.write(data)
         self._file.flush()
         self.byte_count += len(data)
@@ -117,6 +164,8 @@ class RealtimeSTTSession:
             self._silence_ms = 0.0
             if not self._speech_active:
                 self._speech_active = True
+                self._utterance_start_byte = self._last_append_start_byte
+                self._stabilizer.reset()
                 await self.send_event(
                     {
                         "type": "speech_started",
@@ -172,15 +221,32 @@ class RealtimeSTTSession:
         if self.audio_format in PCM_FORMATS:
             snapshot = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
             snapshot.close()
+            frame_size = self.channels * 2
+            rolling_bytes = int(
+                self.sample_rate
+                * frame_size
+                * (self.rolling_window_ms / 1000)
+            )
+            start_byte = max(
+                self._utterance_start_byte,
+                self.byte_count - rolling_bytes,
+            )
+            start_byte -= start_byte % frame_size
             with open(self.path, "rb") as source:
+                source.seek(start_byte)
                 pcm = source.read()
             with wave.open(snapshot.name, "wb") as output:
                 output.setnchannels(self.channels)
                 output.setsampwidth(2)
                 output.setframerate(self.sample_rate)
                 output.writeframes(pcm)
+            bytes_per_ms = self.bytes_per_ms or 1
+            self._snapshot_start_ms = start_byte / bytes_per_ms
+            self._snapshot_end_ms = self.byte_count / bytes_per_ms
             return snapshot.name
 
+        self._snapshot_start_ms = 0.0
+        self._snapshot_end_ms = 0.0
         snapshot = tempfile.NamedTemporaryFile(
             delete=False,
             suffix=Path(self.path).suffix,
@@ -223,6 +289,10 @@ class RealtimeSTTSession:
             if event_type == "partial_transcript" and text == self._latest_text:
                 return result
             self._latest_text = text
+            if event_type == "partial_transcript":
+                stable_text, unstable_text = self._stabilizer.update(text)
+            else:
+                stable_text, unstable_text = self._stabilizer.finalize(text)
             self._revision += 1
             await self.send_event(
                 {
@@ -230,6 +300,10 @@ class RealtimeSTTSession:
                     "request_id": self.request_id,
                     "revision": self._revision,
                     "audio_bytes": snapshot_bytes,
+                    "window_start_ms": round(self._snapshot_start_ms, 1),
+                    "window_end_ms": round(self._snapshot_end_ms, 1),
+                    "stable_text": stable_text,
+                    "unstable_text": unstable_text,
                     **result,
                 }
             )

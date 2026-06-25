@@ -37,11 +37,22 @@ class Settings(BaseModel):
     websocket_stt_vad_silence_ms: int = int(
         os.getenv("WEBSOCKET_STT_VAD_SILENCE_MS", "700")
     )
+    websocket_stt_rolling_window_ms: int = int(
+        os.getenv("WEBSOCKET_STT_ROLLING_WINDOW_MS", "15000")
+    )
     websocket_tts_max_buffer_chars: int = int(
         os.getenv("WEBSOCKET_TTS_MAX_BUFFER_CHARS", "4000")
     )
     websocket_tts_flush_chars: int = int(
         os.getenv("WEBSOCKET_TTS_FLUSH_CHARS", "240")
+    )
+    conversation_barge_in: bool = str_to_bool(
+        os.getenv("CONVERSATION_BARGE_IN"),
+        True,
+    )
+    cors_allow_origin_regex: str = os.getenv(
+        "CORS_ALLOW_ORIGIN_REGEX",
+        r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|null)$",
     )
 
     base_dir: Path = Path(__file__).resolve().parent.parent

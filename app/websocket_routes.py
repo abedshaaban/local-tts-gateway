@@ -408,6 +408,12 @@ def create_websocket_router(
                                     settings.websocket_stt_vad_silence_ms,
                                 )
                             )
+                            rolling_window_ms = int(
+                                data.get(
+                                    "rolling_window_ms",
+                                    settings.websocket_stt_rolling_window_ms,
+                                )
+                            )
                             vad_threshold = float(
                                 data.get(
                                     "vad_threshold",
@@ -426,6 +432,10 @@ def create_websocket_router(
                                 raise ValueError("min_audio_ms cannot be negative.")
                             if vad_silence_ms < 0:
                                 raise ValueError("vad_silence_ms cannot be negative.")
+                            if rolling_window_ms < 1000:
+                                raise ValueError(
+                                    "rolling_window_ms must be at least 1000."
+                                )
                             if not 0 <= vad_threshold <= 1:
                                 raise ValueError("vad_threshold must be between 0 and 1.")
                             realtime_session = RealtimeSTTSession(
@@ -439,6 +449,7 @@ def create_websocket_router(
                                 min_audio_ms=min_audio_ms,
                                 vad_threshold=vad_threshold,
                                 vad_silence_ms=vad_silence_ms,
+                                rolling_window_ms=rolling_window_ms,
                             )
                             realtime_session.start()
                         except ValueError as error:
