@@ -1,9 +1,13 @@
+import math
 import os
+import struct
 import unittest
+import wave
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
@@ -13,6 +17,19 @@ class WebSocketTests(unittest.TestCase):
 
     def tearDown(self):
         self.client.close()
+
+    @staticmethod
+    def generated_pcm_speech(
+        sample_rate: int = 16000,
+        duration_seconds: float = 0.3,
+    ) -> bytes:
+        samples = []
+        for index in range(int(sample_rate * duration_seconds)):
+            t = index / sample_rate
+            envelope = 0.25 + 0.75 * abs(math.sin(2 * math.pi * 4 * t))
+            value = int(12000 * envelope * math.sin(2 * math.pi * 180 * t))
+            samples.append(value)
+        return struct.pack(f"<{len(samples)}h", *samples)
 
     def test_tts_streams_pcm_frames_and_completion_metadata(self):
         chunks = [b"\x00\x01", b"\x02\x03\x04"]
@@ -116,6 +133,14 @@ class WebSocketTests(unittest.TestCase):
             self.assertEqual(error["type"], "error")
             self.assertEqual(error["code"], "upload_not_started")
 
+    def test_stt_idle_timeout_returns_request_id_and_closes_session(self):
+        with patch.object(settings, "websocket_idle_timeout_seconds", 0.01):
+            with self.client.websocket_connect("/ws/stt") as websocket:
+                error = websocket.receive_json()
+                self.assertEqual(error["type"], "error")
+                self.assertEqual(error["code"], "session_timeout")
+                self.assertTrue(error["request_id"].startswith("ws_"))
+
     def test_tts_accepts_incremental_text_and_streams_audio(self):
         generated_text = []
 
@@ -214,6 +239,54 @@ class WebSocketTests(unittest.TestCase):
                 self.assertEqual(final["text"], "version 2")
 
         self.assertEqual(len(calls), 2)
+
+    def test_realtime_stt_integrates_generated_pcm_speech(self):
+        observed = {}
+
+        def transcribe(path):
+            with wave.open(path, "rb") as audio:
+                pcm = audio.readframes(audio.getnframes())
+                observed["frames"] = audio.getnframes()
+                observed["sample_rate"] = audio.getframerate()
+            samples = struct.unpack(f"<{len(pcm) // 2}h", pcm)
+            observed["peak"] = max(abs(sample) for sample in samples)
+            return {
+                "text": "generated speech",
+                "language": "en",
+                "engine_used": "generated-pcm-test",
+                "duration_seconds": 0.01,
+            }
+
+        pcm = self.generated_pcm_speech()
+        with patch("app.main.stt_service.transcribe_file", side_effect=transcribe):
+            with self.client.websocket_connect("/ws/stt") as websocket:
+                websocket.send_json(
+                    {
+                        "type": "start",
+                        "request_id": "stt-generated-pcm",
+                        "format": "pcm_s16le",
+                        "sample_rate": 16000,
+                        "channels": 1,
+                        "realtime": True,
+                        "partial_interval_ms": 60000,
+                        "min_audio_ms": 1,
+                        "vad_threshold": 1,
+                    }
+                )
+                ready = websocket.receive_json()
+                self.assertEqual(ready["queue_max_chunks"], 64)
+
+                for offset in range(0, len(pcm), 640):
+                    websocket.send_bytes(pcm[offset : offset + 640])
+                websocket.send_json({"type": "end"})
+
+                final = websocket.receive_json()
+                self.assertEqual(final["type"], "final_transcript")
+                self.assertEqual(final["text"], "generated speech")
+
+        self.assertEqual(observed["sample_rate"], 16000)
+        self.assertEqual(observed["frames"], len(pcm) // 2)
+        self.assertGreater(observed["peak"], 1000)
 
     def test_realtime_stt_emits_voice_activity_events(self):
         result = {

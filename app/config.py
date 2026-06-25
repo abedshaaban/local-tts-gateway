@@ -54,8 +54,26 @@ class Settings(BaseModel):
     websocket_stt_rolling_window_ms: int = int(
         os.getenv("WEBSOCKET_STT_ROLLING_WINDOW_MS", "15000")
     )
+    websocket_stt_queue_max_chunks: int = int(
+        os.getenv("WEBSOCKET_STT_QUEUE_MAX_CHUNKS", "64")
+    )
+    websocket_stt_backpressure_timeout_ms: int = int(
+        os.getenv("WEBSOCKET_STT_BACKPRESSURE_TIMEOUT_MS", "2000")
+    )
+    websocket_idle_timeout_seconds: float = float(
+        os.getenv("WEBSOCKET_IDLE_TIMEOUT_SECONDS", "60")
+    )
+    websocket_session_max_seconds: float = float(
+        os.getenv("WEBSOCKET_SESSION_MAX_SECONDS", "1800")
+    )
     websocket_tts_max_buffer_chars: int = int(
         os.getenv("WEBSOCKET_TTS_MAX_BUFFER_CHARS", "4000")
+    )
+    websocket_tts_queue_max_segments: int = int(
+        os.getenv("WEBSOCKET_TTS_QUEUE_MAX_SEGMENTS", "32")
+    )
+    websocket_tts_backpressure_timeout_ms: int = int(
+        os.getenv("WEBSOCKET_TTS_BACKPRESSURE_TIMEOUT_MS", "2000")
     )
     websocket_tts_flush_chars: int = int(
         os.getenv("WEBSOCKET_TTS_FLUSH_CHARS", "240")

@@ -3,12 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "local-tts-gateway"
+name = "local-speech-gateway"
 version = "0.1.0"
-description = "Python client for Local TTS Gateway"
+description = "Python client for Local Speech Gateway"
 requires-python = ">=3.10"
 dependencies = ["websockets>=12"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["local_tts_gateway*"]
+include = ["local_speech_gateway*", "local_tts_gateway*"]

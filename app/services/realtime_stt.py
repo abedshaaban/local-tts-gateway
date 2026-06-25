@@ -1,7 +1,7 @@
 import asyncio
 import os
-import shutil
 import tempfile
+import threading
 import wave
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -16,6 +16,10 @@ SendEvent = Callable[[dict], Awaitable[None]]
 
 PCM_FORMATS = {"pcm_s16le", "s16le"}
 UPLOAD_FORMATS = {"wav", "mp3", "m4a", "aac", "flac", "ogg", "webm"}
+
+
+class AudioBackpressureError(ValueError):
+    pass
 
 
 def common_word_prefix(left: str, right: str) -> str:
@@ -67,6 +71,8 @@ class RealtimeSTTSession:
         vad_threshold: float | None = None,
         vad_silence_ms: int | None = None,
         rolling_window_ms: int | None = None,
+        queue_max_chunks: int | None = None,
+        backpressure_timeout_ms: int | None = None,
     ):
         self.service = service
         self.send_event = send_event
@@ -99,11 +105,26 @@ class RealtimeSTTSession:
             if rolling_window_ms is not None
             else settings.websocket_stt_rolling_window_ms
         )
+        self.queue_max_chunks = (
+            queue_max_chunks
+            if queue_max_chunks is not None
+            else settings.websocket_stt_queue_max_chunks
+        )
+        self.backpressure_timeout_ms = (
+            backpressure_timeout_ms
+            if backpressure_timeout_ms is not None
+            else settings.websocket_stt_backpressure_timeout_ms
+        )
+        if self.queue_max_chunks < 1:
+            raise ValueError("queue_max_chunks must be at least 1.")
+        if self.backpressure_timeout_ms < 1:
+            raise ValueError("backpressure_timeout_ms must be at least 1.")
 
         suffix = ".pcm" if audio_format in PCM_FORMATS else f".{audio_format}"
         self._file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         self.path = self._file.name
         self.byte_count = 0
+        self._accepted_byte_count = 0
         self._last_transcribed_bytes = 0
         self._latest_text = ""
         self._revision = 0
@@ -111,6 +132,12 @@ class RealtimeSTTSession:
         self._transcription_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._partial_task: asyncio.Task | None = None
+        self._ingest_task: asyncio.Task | None = None
+        self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue(
+            maxsize=self.queue_max_chunks
+        )
+        self._ingest_error: Exception | None = None
+        self._file_lock = threading.Lock()
         self._speech_active = False
         self._silence_ms = 0.0
         self._utterance_start_byte = 0
@@ -131,22 +158,75 @@ class RealtimeSTTSession:
             return None
         return self.byte_count / self.bytes_per_ms
 
+    @property
+    def has_audio(self) -> bool:
+        return self._accepted_byte_count > 0
+
     def start(self):
-        self._partial_task = asyncio.create_task(self._partial_loop())
+        if self._ingest_task is None:
+            self._ingest_task = asyncio.create_task(self._ingest_loop())
+        if self._partial_task is None:
+            self._partial_task = asyncio.create_task(self._partial_loop())
 
     async def append(self, data: bytes):
         if self._closed:
             raise RuntimeError("The audio session is closed.")
-        if self.byte_count + len(data) > settings.websocket_stt_max_bytes:
+        self._raise_ingest_error()
+        if self._ingest_task is None:
+            self.start()
+        if self._accepted_byte_count + len(data) > settings.websocket_stt_max_bytes:
             raise ValueError("Audio upload exceeds the configured size limit.")
 
+        try:
+            await asyncio.wait_for(
+                self._audio_queue.put(data),
+                timeout=self.backpressure_timeout_ms / 1000,
+            )
+        except asyncio.TimeoutError as error:
+            raise AudioBackpressureError(
+                "Audio consumer did not accept data before the backpressure timeout."
+            ) from error
+        self._accepted_byte_count += len(data)
+
+    async def _ingest_loop(self):
+        try:
+            while True:
+                data = await self._audio_queue.get()
+                try:
+                    await self._write_audio(data)
+                finally:
+                    self._audio_queue.task_done()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._ingest_error = error
+
+    async def _write_audio(self, data: bytes):
         self._last_append_start_byte = self.byte_count
-        self._file.write(data)
-        self._file.flush()
+        with self._file_lock:
+            self._file.write(data)
+            self._file.flush()
         self.byte_count += len(data)
 
         if self.audio_format in PCM_FORMATS:
             await self._update_vad(data)
+
+    def _raise_ingest_error(self):
+        if self._ingest_error is not None:
+            raise RuntimeError(f"Audio ingestion failed: {self._ingest_error}")
+
+    async def drain(self):
+        if self._ingest_task is None:
+            return
+        join_task = asyncio.create_task(self._audio_queue.join())
+        done, _pending = await asyncio.wait(
+            {join_task, self._ingest_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if join_task not in done:
+            join_task.cancel()
+            await asyncio.gather(join_task, return_exceptions=True)
+        self._raise_ingest_error()
 
     async def _update_vad(self, data: bytes):
         frame_size = 2 * self.channels
@@ -207,6 +287,7 @@ class RealtimeSTTSession:
                 if self._stop.is_set():
                     break
                 try:
+                    await self.drain()
                     await self.transcribe(event_type="partial_transcript")
                 except Exception:
                     # Compressed streams can be temporarily undecodable between
@@ -216,8 +297,9 @@ class RealtimeSTTSession:
         except asyncio.CancelledError:
             pass
 
-    def _create_snapshot(self) -> str:
-        self._file.flush()
+    def _create_snapshot(self, snapshot_end_byte: int | None = None) -> str:
+        if snapshot_end_byte is None:
+            snapshot_end_byte = self.byte_count
         if self.audio_format in PCM_FORMATS:
             snapshot = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
             snapshot.close()
@@ -229,12 +311,14 @@ class RealtimeSTTSession:
             )
             start_byte = max(
                 self._utterance_start_byte,
-                self.byte_count - rolling_bytes,
+                snapshot_end_byte - rolling_bytes,
             )
             start_byte -= start_byte % frame_size
-            with open(self.path, "rb") as source:
-                source.seek(start_byte)
-                pcm = source.read()
+            with self._file_lock:
+                self._file.flush()
+                with open(self.path, "rb") as source:
+                    source.seek(start_byte)
+                    pcm = source.read(snapshot_end_byte - start_byte)
             with wave.open(snapshot.name, "wb") as output:
                 output.setnchannels(self.channels)
                 output.setsampwidth(2)
@@ -242,7 +326,7 @@ class RealtimeSTTSession:
                 output.writeframes(pcm)
             bytes_per_ms = self.bytes_per_ms or 1
             self._snapshot_start_ms = start_byte / bytes_per_ms
-            self._snapshot_end_ms = self.byte_count / bytes_per_ms
+            self._snapshot_end_ms = snapshot_end_byte / bytes_per_ms
             return snapshot.name
 
         self._snapshot_start_ms = 0.0
@@ -252,7 +336,10 @@ class RealtimeSTTSession:
             suffix=Path(self.path).suffix,
         )
         snapshot.close()
-        shutil.copyfile(self.path, snapshot.name)
+        with self._file_lock:
+            self._file.flush()
+            with open(self.path, "rb") as source, open(snapshot.name, "wb") as output:
+                output.write(source.read(snapshot_end_byte))
         return snapshot.name
 
     async def transcribe(self, event_type: str, force: bool = False):
@@ -266,8 +353,11 @@ class RealtimeSTTSession:
             return None
 
         async with self._transcription_lock:
-            snapshot_path = await asyncio.to_thread(self._create_snapshot)
             snapshot_bytes = self.byte_count
+            snapshot_path = await asyncio.to_thread(
+                self._create_snapshot,
+                snapshot_bytes,
+            )
             try:
                 transcription = asyncio.create_task(
                     asyncio.to_thread(
@@ -311,6 +401,7 @@ class RealtimeSTTSession:
             return result
 
     async def finish(self):
+        await self.drain()
         await self._stop_worker()
         if self.byte_count == 0:
             raise ValueError("No audio data was received.")
@@ -327,8 +418,15 @@ class RealtimeSTTSession:
         if self._closed:
             return
         self._closed = True
-        await self._stop_worker()
-        if not self._file.closed:
-            self._file.close()
-        if os.path.exists(self.path):
-            os.remove(self.path)
+        try:
+            await self._stop_worker()
+            if self._ingest_task is not None:
+                self._ingest_task.cancel()
+                await asyncio.gather(self._ingest_task, return_exceptions=True)
+                self._ingest_task = None
+        finally:
+            with self._file_lock:
+                if not self._file.closed:
+                    self._file.close()
+            if os.path.exists(self.path):
+                os.remove(self.path)

@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import time
 import uuid
 import warnings
 
@@ -15,19 +16,10 @@ warnings.filterwarnings(
 )
 
 
-def _configure_app_logging() -> None:
-    app_logger = logging.getLogger("app")
-    if app_logger.handlers:
-        return
+from app.logging_config import configure_app_logging
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
-    app_logger.addHandler(handler)
-    app_logger.setLevel(logging.INFO)
-    app_logger.propagate = False
-
-
-_configure_app_logging()
+configure_app_logging()
+logger = logging.getLogger(__name__)
 
 import os
 import shutil
@@ -61,7 +53,7 @@ from app.openai_compat import create_openai_compat_router
 from app.websocket_routes import create_websocket_router
 
 app = FastAPI(
-    title="Local TTS Gateway",
+    title="Local Speech Gateway",
     description="Local Kokoro-powered text-to-speech and speech-to-text service",
     version="0.3.0",
 )
@@ -86,8 +78,33 @@ app.include_router(create_elevenlabs_compat_router(tts_service, model_registry))
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
-    response = await call_next(request)
+    request.state.request_id = request_id
+    started_at = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "HTTP request failed",
+            extra={
+                "event": "http_request_failed",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        raise
     response.headers.setdefault("x-request-id", request_id)
+    logger.info(
+        "HTTP request completed",
+        extra={
+            "event": "http_request_completed",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round((time.monotonic() - started_at) * 1000, 1),
+        },
+    )
     return response
 
 
@@ -95,7 +112,7 @@ async def add_request_id(request: Request, call_next):
 def health_check():
     return {
         "ok": True,
-        "service": "local-tts-gateway",
+        "service": "local-speech-gateway",
     }
 
 
@@ -111,7 +128,13 @@ def runtime_info():
         "websocket_stt_partial_interval_ms": settings.websocket_stt_partial_interval_ms,
         "websocket_stt_min_audio_ms": settings.websocket_stt_min_audio_ms,
         "websocket_stt_rolling_window_ms": settings.websocket_stt_rolling_window_ms,
+        "websocket_stt_queue_max_chunks": settings.websocket_stt_queue_max_chunks,
+        "websocket_stt_backpressure_timeout_ms": settings.websocket_stt_backpressure_timeout_ms,
+        "websocket_idle_timeout_seconds": settings.websocket_idle_timeout_seconds,
+        "websocket_session_max_seconds": settings.websocket_session_max_seconds,
         "websocket_tts_max_buffer_chars": settings.websocket_tts_max_buffer_chars,
+        "websocket_tts_queue_max_segments": settings.websocket_tts_queue_max_segments,
+        "websocket_tts_backpressure_timeout_ms": settings.websocket_tts_backpressure_timeout_ms,
         "conversation_barge_in": settings.conversation_barge_in,
         "cors_allow_origin_regex": settings.cors_allow_origin_regex,
         "default_tts_model": settings.default_tts_model,

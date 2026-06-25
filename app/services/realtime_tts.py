@@ -12,6 +12,10 @@ SendAudio = Callable[[bytes], Awaitable[None]]
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])(?:[\"')\]]*)\s+|\n+")
 
 
+class TextBackpressureError(ValueError):
+    pass
+
+
 def take_ready_text(buffer: str, force: bool = False) -> tuple[list[str], str]:
     chunks = []
     start = 0
@@ -60,7 +64,9 @@ class RealtimeTTSSession:
         self.lang_code = lang_code
         self.split_pattern = split_pattern
         self.buffer = ""
-        self.queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=32)
+        self.queue: asyncio.Queue[str | None] = asyncio.Queue(
+            maxsize=settings.websocket_tts_queue_max_segments
+        )
         self.cancelled = False
         self.ending = False
         self.chunk_count = 0
@@ -123,10 +129,20 @@ class RealtimeTTSSession:
     async def _put(self, item: str | None):
         self._ensure_worker_running()
         put_task = asyncio.create_task(self.queue.put(item))
-        done, _pending = await asyncio.wait(
-            {put_task, self._worker},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        try:
+            done, _pending = await asyncio.wait_for(
+                asyncio.wait(
+                    {put_task, self._worker},
+                    return_when=asyncio.FIRST_COMPLETED,
+                ),
+                timeout=settings.websocket_tts_backpressure_timeout_ms / 1000,
+            )
+        except asyncio.TimeoutError as error:
+            put_task.cancel()
+            await asyncio.gather(put_task, return_exceptions=True)
+            raise TextBackpressureError(
+                "TTS consumer did not accept text before the backpressure timeout."
+            ) from error
         if put_task in done:
             return
         put_task.cancel()

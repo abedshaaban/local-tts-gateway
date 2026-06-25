@@ -46,7 +46,7 @@ def _multipart_file(
     return b"".join(parts), boundary
 
 
-class LocalTTSGateway:
+class LocalSpeechGateway:
     def __init__(self, base_url: str = "http://127.0.0.1:47829"):
         self.base_url = base_url.rstrip("/") + "/"
 
@@ -105,6 +105,9 @@ class LocalTTSGateway:
 
     def conversation(self, **kwargs):
         return ConversationClient(self.base_url, **kwargs)
+
+
+LocalTTSGateway = LocalSpeechGateway
 
 
 class ConversationClient:

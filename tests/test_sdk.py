@@ -7,9 +7,13 @@ SDK_PATH = Path(__file__).resolve().parents[1] / "sdk" / "python"
 sys.path.insert(0, str(SDK_PATH))
 
 from local_tts_gateway.client import _multipart_file, _websocket_url
+from local_speech_gateway import LocalSpeechGateway, LocalTTSGateway
 
 
 class PythonSDKTests(unittest.TestCase):
+    def test_new_sdk_name_preserves_old_class_alias(self):
+        self.assertIs(LocalSpeechGateway, LocalTTSGateway)
+
     def test_builds_conversation_websocket_url(self):
         self.assertEqual(
             _websocket_url("https://gateway.example", "/ws/conversation"),

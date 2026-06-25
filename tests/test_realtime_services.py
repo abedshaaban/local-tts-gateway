@@ -1,9 +1,14 @@
+import asyncio
 import os
 import unittest
 import wave
 from unittest.mock import patch
 
-from app.services.realtime_stt import RealtimeSTTSession, TranscriptStabilizer
+from app.services.realtime_stt import (
+    AudioBackpressureError,
+    RealtimeSTTSession,
+    TranscriptStabilizer,
+)
 from app.services.realtime_tts import take_ready_text
 
 
@@ -51,6 +56,7 @@ class RealtimeSTTSnapshotTests(unittest.IsolatedAsyncioTestCase):
         snapshot_path = None
         try:
             await session.append(b"\x00\x00" * 160)
+            await session.drain()
             snapshot_path = session._create_snapshot()
 
             with wave.open(snapshot_path, "rb") as snapshot:
@@ -61,6 +67,38 @@ class RealtimeSTTSnapshotTests(unittest.IsolatedAsyncioTestCase):
         finally:
             if snapshot_path and os.path.exists(snapshot_path):
                 os.remove(snapshot_path)
+            await session.close()
+
+    async def test_bounded_audio_queue_reports_backpressure(self):
+        speech_started = asyncio.Event()
+        release_event = asyncio.Event()
+
+        async def send_event(event):
+            if event["type"] == "speech_started":
+                speech_started.set()
+                await release_event.wait()
+
+        session = RealtimeSTTSession(
+            service=object(),
+            send_event=send_event,
+            request_id="backpressure-1",
+            audio_format="pcm_s16le",
+            sample_rate=16000,
+            channels=1,
+            partial_interval_ms=60000,
+            vad_threshold=0.01,
+            queue_max_chunks=1,
+            backpressure_timeout_ms=10,
+        )
+        try:
+            session.start()
+            await session.append(b"\xff\x7f" * 160)
+            await asyncio.wait_for(speech_started.wait(), timeout=1)
+            await session.append(b"\x00\x00" * 160)
+            with self.assertRaises(AudioBackpressureError):
+                await session.append(b"\x00\x00" * 160)
+        finally:
+            release_event.set()
             await session.close()
 
     async def test_pcm_snapshot_uses_bounded_rolling_window(self):
@@ -81,6 +119,7 @@ class RealtimeSTTSnapshotTests(unittest.IsolatedAsyncioTestCase):
         snapshot_path = None
         try:
             await session.append(b"\x01\x00" * 2000)
+            await session.drain()
             snapshot_path = session._create_snapshot()
             with wave.open(snapshot_path, "rb") as snapshot:
                 self.assertEqual(snapshot.getnframes(), 1000)

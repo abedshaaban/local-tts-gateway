@@ -1,17 +1,52 @@
 import asyncio
 import json
+import logging
 import os
 import tempfile
+import time
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from app.config import settings
 from app.schemas import TTSRequest
-from app.services.realtime_stt import PCM_FORMATS, UPLOAD_FORMATS, RealtimeSTTSession
-from app.services.realtime_tts import RealtimeTTSSession
+from app.services.realtime_stt import (
+    PCM_FORMATS,
+    UPLOAD_FORMATS,
+    AudioBackpressureError,
+    RealtimeSTTSession,
+)
+from app.services.realtime_tts import RealtimeTTSSession, TextBackpressureError
 from app.services.stt_service import STTService
 from app.services.tts_service import TTSService
+
+logger = logging.getLogger(__name__)
+
+
+class SessionTimeoutError(TimeoutError):
+    pass
+
+
+async def _receive_message(
+    websocket: WebSocket,
+    session_started_at: float | None = None,
+):
+    timeout = settings.websocket_idle_timeout_seconds
+    timeout_message = "WebSocket idle timeout exceeded."
+    if session_started_at is not None:
+        remaining = settings.websocket_session_max_seconds - (
+            time.monotonic() - session_started_at
+        )
+        if remaining <= 0:
+            raise SessionTimeoutError("Maximum session duration exceeded.")
+        if remaining < timeout:
+            timeout = remaining
+            timeout_message = "Maximum session duration exceeded."
+    try:
+        return await asyncio.wait_for(websocket.receive(), timeout=timeout)
+    except asyncio.TimeoutError as error:
+        raise SessionTimeoutError(timeout_message) from error
 
 
 def _next_audio_chunk(generator):
@@ -41,8 +76,10 @@ def create_websocket_router(
     @router.websocket("/ws/tts")
     async def websocket_tts(websocket: WebSocket):
         await websocket.accept()
+        connection_id = f"ws_{uuid.uuid4().hex}"
         send_lock = asyncio.Lock()
         session: RealtimeTTSSession | None = None
+        session_started_at: float | None = None
 
         async def send_json(payload: dict):
             async with send_lock:
@@ -54,7 +91,22 @@ def create_websocket_router(
 
         try:
             while True:
-                message = await websocket.receive()
+                try:
+                    message = await _receive_message(
+                        websocket,
+                        session_started_at,
+                    )
+                except SessionTimeoutError as error:
+                    await send_json(
+                        _error(
+                            str(error),
+                            request_id=(
+                                session.request_id if session else connection_id
+                            ),
+                            code="session_timeout",
+                        )
+                    )
+                    break
                 if message["type"] == "websocket.disconnect":
                     break
 
@@ -74,7 +126,7 @@ def create_websocket_router(
                     if not isinstance(data, dict):
                         raise ValueError("Request must be a JSON object.")
 
-                    request_id = data.get("request_id")
+                    request_id = data.get("request_id") or f"tts_{uuid.uuid4().hex}"
                     message_type = data.get("type", "synthesize")
                 except (json.JSONDecodeError, ValidationError, ValueError) as error:
                     await send_json(
@@ -115,6 +167,15 @@ def create_websocket_router(
                             lang_code=payload.lang_code,
                             split_pattern=payload.split_pattern,
                         )
+                        session_started_at = time.monotonic()
+                        logger.info(
+                            "TTS stream started",
+                            extra={
+                                "event": "tts_stream_started",
+                                "request_id": request_id,
+                                "connection_id": connection_id,
+                            },
+                        )
                         await send_json(
                             {
                                 "type": "ready",
@@ -123,6 +184,8 @@ def create_websocket_router(
                                 "sample_rate": settings.sample_rate,
                                 "channels": 1,
                                 "max_buffer_chars": settings.websocket_tts_max_buffer_chars,
+                                "queue_max_segments": settings.websocket_tts_queue_max_segments,
+                                "backpressure_timeout_ms": settings.websocket_tts_backpressure_timeout_ms,
                             }
                         )
                     except (ValidationError, ValueError) as error:
@@ -157,11 +220,24 @@ def create_websocket_router(
                         elif message_type == "end":
                             try:
                                 await active_session.finish()
+                            except Exception:
+                                await active_session.cancel(notify=False)
+                                raise
                             finally:
                                 session = None
+                                session_started_at = None
                         else:
                             await active_session.cancel()
                             session = None
+                            session_started_at = None
+                    except TextBackpressureError as error:
+                        await send_json(
+                            _error(
+                                str(error),
+                                request_id=active_session.request_id,
+                                code="backpressure_timeout",
+                            )
+                        )
                     except ValueError as error:
                         await send_json(
                             _error(
@@ -257,6 +333,7 @@ def create_websocket_router(
     @router.websocket("/ws/stt")
     async def websocket_stt(websocket: WebSocket):
         await websocket.accept()
+        connection_id = f"ws_{uuid.uuid4().hex}"
 
         allowed_formats = UPLOAD_FORMATS
         temp_file = None
@@ -264,6 +341,7 @@ def create_websocket_router(
         request_id = None
         byte_count = 0
         realtime_session: RealtimeSTTSession | None = None
+        session_started_at: float | None = None
         send_lock = asyncio.Lock()
 
         async def send_json(payload: dict):
@@ -283,7 +361,33 @@ def create_websocket_router(
 
         try:
             while True:
-                message = await websocket.receive()
+                try:
+                    message = await _receive_message(
+                        websocket,
+                        session_started_at,
+                    )
+                except SessionTimeoutError as error:
+                    active_request_id = (
+                        realtime_session.request_id
+                        if realtime_session is not None
+                        else request_id or connection_id
+                    )
+                    await send_json(
+                        _error(
+                            str(error),
+                            request_id=active_request_id,
+                            code="session_timeout",
+                        )
+                    )
+                    logger.info(
+                        "STT session timed out",
+                        extra={
+                            "event": "stt_session_timeout",
+                            "request_id": active_request_id,
+                            "connection_id": connection_id,
+                        },
+                    )
+                    break
                 if message["type"] == "websocket.disconnect":
                     break
 
@@ -292,6 +396,23 @@ def create_websocket_router(
                     if realtime_session is not None:
                         try:
                             await realtime_session.append(binary)
+                        except AudioBackpressureError as error:
+                            failed_request_id = realtime_session.request_id
+                            await send_json(
+                                _error(
+                                    str(error),
+                                    request_id=failed_request_id,
+                                    code="backpressure_timeout",
+                                )
+                            )
+                            logger.warning(
+                                "STT audio queue saturated",
+                                extra={
+                                    "event": "stt_backpressure_timeout",
+                                    "request_id": failed_request_id,
+                                    "connection_id": connection_id,
+                                },
+                            )
                         except ValueError as error:
                             failed_request_id = realtime_session.request_id
                             await realtime_session.close()
@@ -359,7 +480,8 @@ def create_websocket_router(
                         await realtime_session.close()
                         realtime_session = None
                     cleanup_upload()
-                    request_id = data.get("request_id")
+                    request_id = data.get("request_id") or f"stt_{uuid.uuid4().hex}"
+                    session_started_at = time.monotonic()
                     audio_format = str(data.get("format", "webm")).lower().lstrip(".")
                     realtime = bool(data.get("realtime", False))
                     supported_formats = allowed_formats | PCM_FORMATS
@@ -373,6 +495,7 @@ def create_websocket_router(
                             )
                         )
                         request_id = None
+                        session_started_at = None
                         continue
 
                     if audio_format in PCM_FORMATS and not realtime:
@@ -384,6 +507,7 @@ def create_websocket_router(
                             )
                         )
                         request_id = None
+                        session_started_at = None
                         continue
 
                     if realtime:
@@ -462,6 +586,7 @@ def create_websocket_router(
                                 )
                             )
                             request_id = None
+                            session_started_at = None
                             continue
 
                         await send_json(
@@ -474,7 +599,20 @@ def create_websocket_router(
                                 "channels": channels,
                                 "partial_interval_ms": realtime_session.partial_interval_ms,
                                 "max_bytes": settings.websocket_stt_max_bytes,
+                                "queue_max_chunks": realtime_session.queue_max_chunks,
+                                "backpressure_timeout_ms": realtime_session.backpressure_timeout_ms,
                             }
+                        )
+                        logger.info(
+                            "Realtime STT stream started",
+                            extra={
+                                "event": "stt_stream_started",
+                                "request_id": request_id,
+                                "connection_id": connection_id,
+                                "audio_format": audio_format,
+                                "sample_rate": sample_rate,
+                                "channels": channels,
+                            },
                         )
                         continue
 
@@ -499,6 +637,7 @@ def create_websocket_router(
                         await realtime_session.close()
                         realtime_session = None
                         request_id = None
+                        session_started_at = None
                         await send_json(
                             {
                                 "type": "aborted",
@@ -508,6 +647,7 @@ def create_websocket_router(
                         continue
                     aborted_request_id = request_id
                     cleanup_upload()
+                    session_started_at = None
                     await send_json(
                         {
                             "type": "aborted",
@@ -527,6 +667,7 @@ def create_websocket_router(
                         )
                     else:
                         try:
+                            await realtime_session.drain()
                             await realtime_session.transcribe(
                                 event_type="partial_transcript",
                                 force=True,
@@ -566,6 +707,7 @@ def create_websocket_router(
                             await realtime_session.close()
                             realtime_session = None
                             request_id = None
+                            session_started_at = None
                         continue
 
                     if temp_file is None or temp_path is None:
@@ -618,6 +760,7 @@ def create_websocket_router(
                         )
                     finally:
                         cleanup_upload()
+                        session_started_at = None
                     continue
 
                 await send_json(

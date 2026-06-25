@@ -1,12 +1,17 @@
 import asyncio
 import json
+import time
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import settings
-from app.services.realtime_stt import PCM_FORMATS, RealtimeSTTSession
-from app.services.realtime_tts import RealtimeTTSSession
+from app.services.realtime_stt import (
+    PCM_FORMATS,
+    AudioBackpressureError,
+    RealtimeSTTSession,
+)
+from app.services.realtime_tts import RealtimeTTSSession, TextBackpressureError
 from app.services.stt_service import STTService
 from app.services.tts_service import TTSService
 
@@ -33,6 +38,7 @@ def create_conversation_router(
         tts_finish_task: asyncio.Task | None = None
         session_config: dict = {}
         session_id = f"conv_{uuid.uuid4().hex}"
+        connection_started_at = time.monotonic()
 
         async def send_json(event: dict):
             async with send_lock:
@@ -245,7 +251,35 @@ def create_conversation_router(
 
         try:
             while True:
-                message = await websocket.receive()
+                remaining = settings.websocket_session_max_seconds - (
+                    time.monotonic() - connection_started_at
+                )
+                if remaining <= 0:
+                    await send_json(
+                        _error(
+                            "Maximum session duration exceeded.",
+                            code="session_timeout",
+                            request_id=session_id,
+                        )
+                    )
+                    break
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(),
+                        timeout=min(
+                            settings.websocket_idle_timeout_seconds,
+                            remaining,
+                        ),
+                    )
+                except asyncio.TimeoutError:
+                    await send_json(
+                        _error(
+                            "WebSocket session timeout exceeded.",
+                            code="session_timeout",
+                            request_id=session_id,
+                        )
+                    )
+                    break
                 if message["type"] == "websocket.disconnect":
                     break
 
@@ -261,6 +295,14 @@ def create_conversation_router(
                         continue
                     try:
                         await stt_session.append(audio)
+                    except AudioBackpressureError as error:
+                        await send_json(
+                            _error(
+                                str(error),
+                                code="backpressure_timeout",
+                                request_id=session_id,
+                            )
+                        )
                     except Exception as error:
                         await send_json(
                             _error(
@@ -301,11 +343,14 @@ def create_conversation_router(
                                     "barge_in",
                                     settings.conversation_barge_in,
                                 ),
+                                "queue_max_chunks": stt_session.queue_max_chunks,
+                                "backpressure_timeout_ms": stt_session.backpressure_timeout_ms,
                             }
                         )
                     elif event_type == "input_audio_buffer.commit":
                         if stt_session is None:
                             raise ValueError("The session has not started.")
+                        await stt_session.drain()
                         await stt_session.transcribe(
                             event_type="partial_transcript",
                             force=True,
@@ -345,7 +390,7 @@ def create_conversation_router(
                     elif event_type == "response.cancel":
                         await cancel_response("client_cancelled")
                     elif event_type == "session.end":
-                        if stt_session is not None and stt_session.byte_count:
+                        if stt_session is not None and stt_session.has_audio:
                             await stt_session.finish()
                         await send_json(
                             {
@@ -361,6 +406,14 @@ def create_conversation_router(
                                 code="invalid_event_type",
                             )
                         )
+                except TextBackpressureError as error:
+                    await send_json(
+                        _error(
+                            str(error),
+                            code="backpressure_timeout",
+                            request_id=session_id,
+                        )
+                    )
                 except ValueError as error:
                     await send_json(_error(str(error), code="invalid_request"))
                 except Exception as error:

@@ -1,4 +1,4 @@
-# Local TTS Gateway
+# Local Speech Gateway
 
 A local Python/FastAPI text-to-speech and speech-to-text microservice. TTS is powered by [Kokoro](https://github.com/hexgrad/kokoro). STT uses Parakeet MLX on Apple Silicon with automatic fallback to whisper.cpp and faster-whisper.
 
@@ -52,7 +52,7 @@ Optional whisper.cpp fallback (build separately):
 Use this every time you open a new terminal and want to run the server.
 
 ```bash
-cd local-tts-gateway
+cd local-speech-gateway
 source .venv/bin/activate
 python -m uvicorn app.main:app --host 127.0.0.1 --port 47829 --reload
 ```
@@ -67,7 +67,7 @@ Your shell prompt should show `(.venv)` after activation. If `uvicorn` is not fo
 Run once after cloning or downloading the project.
 
 ```bash
-cd local-tts-gateway
+cd local-speech-gateway
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -379,11 +379,16 @@ Realtime mode also accepts `wav`, `webm`, `mp3`, `m4a`, `aac`, `flac`, and
 FFmpeg can decode the current container boundary, so raw PCM is recommended.
 VAD events are available only for raw PCM.
 
-The installed STT engines are file-oriented. Realtime mode therefore takes
-periodic snapshots of the accumulated audio and retranscribes them instead of
-maintaining a native decoder state. This provides live partial results while
-retaining the existing Parakeet/Whisper engine fallback behavior, at the cost
-of increasing work as a session grows.
+The installed STT engines are file-oriented. Realtime mode therefore
+retranscribes a bounded rolling snapshot instead of maintaining native decoder
+state. Ingestion uses a bounded queue, and `commit`/`end` drain accepted frames
+before transcription. A future native-streaming backend can replace snapshot
+transcription without changing the WebSocket protocol.
+
+The `ready` event reports `queue_max_chunks` and
+`backpressure_timeout_ms`. If the queue remains saturated, the server emits an
+error with code `backpressure_timeout`. Idle and maximum-duration sessions emit
+`session_timeout` and are cleaned up.
 
 Optional `start` fields:
 
@@ -394,6 +399,10 @@ Optional `start` fields:
 | `vad_threshold` | `0.015` | Normalized PCM RMS threshold for speech |
 | `vad_silence_ms` | `700` | Silence required to finalize an utterance |
 | `rolling_window_ms` | `15000` | Maximum raw PCM window retranscribed for partials |
+
+Every WebSocket session receives a request ID when the client does not provide
+one. HTTP responses return `X-Request-ID`. Gateway logs are newline-delimited
+JSON and include request IDs for lifecycle events.
 
 ## Unified conversation WebSocket
 
@@ -567,9 +576,9 @@ pip install -e sdk/python
 ```
 
 ```python
-from local_tts_gateway import LocalTTSGateway
+from local_speech_gateway import LocalSpeechGateway
 
-gateway = LocalTTSGateway()
+gateway = LocalSpeechGateway()
 audio = gateway.speech("Hello locally.", response_format="wav")
 open("speech.wav", "wb").write(audio)
 print(gateway.transcribe("speech.wav"))
@@ -646,7 +655,7 @@ Voice availability depends on the Kokoro version installed.
 ## Project structure
 
 ```txt
-local-tts-gateway/
+local-speech-gateway/
 ├─ app/
 │  ├─ main.py           # FastAPI routes
 │  ├─ config.py         # Settings
@@ -689,6 +698,12 @@ HF_HOME=.cache/huggingface
 STT_LANGUAGE=en
 STT_ENGINE_ORDER=parakeet_mlx,whisper_cpp,faster_whisper
 STT_RETURN_ENGINE_USED=true
+WEBSOCKET_STT_QUEUE_MAX_CHUNKS=64
+WEBSOCKET_STT_BACKPRESSURE_TIMEOUT_MS=2000
+WEBSOCKET_TTS_QUEUE_MAX_SEGMENTS=32
+WEBSOCKET_TTS_BACKPRESSURE_TIMEOUT_MS=2000
+WEBSOCKET_IDLE_TIMEOUT_SECONDS=60
+WEBSOCKET_SESSION_MAX_SECONDS=1800
 PARAKEET_MLX_MODEL=mlx-community/parakeet-tdt-0.6b-v3
 WHISPER_CPP_BIN=./vendor/whisper.cpp/build/bin/whisper-cli
 WHISPER_CPP_MODEL=./models/whisper/ggml-large-v3-turbo.bin

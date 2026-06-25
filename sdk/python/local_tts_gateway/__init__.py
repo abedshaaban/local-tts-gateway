@@ -1,3 +1,3 @@
-from .client import ConversationClient, LocalTTSGateway
+from .client import ConversationClient, LocalSpeechGateway, LocalTTSGateway
 
-__all__ = ["ConversationClient", "LocalTTSGateway"]
+__all__ = ["ConversationClient", "LocalSpeechGateway", "LocalTTSGateway"]
