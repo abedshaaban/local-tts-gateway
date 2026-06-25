@@ -282,6 +282,7 @@ export class LocalTTSGateway {
   async speech(
     input: string,
     options: {
+      model?: string;
       voice?: string;
       responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
       speed?: number;
@@ -291,7 +292,7 @@ export class LocalTTSGateway {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "local-tts",
+        model: options.model ?? "local-tts",
         input,
         voice: options.voice ?? "alloy",
         response_format: options.responseFormat ?? "wav",
@@ -304,11 +305,15 @@ export class LocalTTSGateway {
 
   async transcribe(
     audio: Blob,
-    options: { filename?: string; responseFormat?: "json" | "text" } = {},
+    options: {
+      filename?: string;
+      model?: string;
+      responseFormat?: "json" | "text";
+    } = {},
   ): Promise<{ text: string }> {
     const form = new FormData();
     form.append("file", audio, options.filename ?? "audio.webm");
-    form.append("model", "local-stt");
+    form.append("model", options.model ?? "local-stt");
     form.append("response_format", options.responseFormat ?? "json");
     const response = await fetch(
       new URL("/v1/audio/transcriptions", this.baseUrl),

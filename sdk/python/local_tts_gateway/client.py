@@ -54,13 +54,14 @@ class LocalTTSGateway:
         self,
         text: str,
         *,
+        model: str = "local-tts",
         voice: str = "alloy",
         response_format: str = "wav",
         speed: float = 1,
     ) -> bytes:
         payload = json.dumps(
             {
-                "model": "local-tts",
+                "model": model,
                 "input": text,
                 "voice": voice,
                 "response_format": response_format,
@@ -80,6 +81,7 @@ class LocalTTSGateway:
         self,
         audio_path: str | Path,
         *,
+        model: str = "local-stt",
         response_format: str = "json",
     ):
         path = Path(audio_path)
@@ -87,7 +89,7 @@ class LocalTTSGateway:
             "file",
             path,
             {
-                "model": "local-stt",
+                "model": model,
                 "response_format": response_format,
             },
         )

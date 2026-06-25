@@ -13,6 +13,14 @@ def str_to_bool(value: str | None, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "y", "on"}
 
 
+def csv_to_set(value: str | None, default: str) -> set[str]:
+    return {
+        item.strip()
+        for item in (value if value is not None else default).split(",")
+        if item.strip()
+    }
+
+
 class Settings(BaseModel):
     app_host: str = os.getenv("APP_HOST", "127.0.0.1")
     app_port: int = int(os.getenv("APP_PORT", "47829"))
@@ -20,6 +28,12 @@ class Settings(BaseModel):
     default_lang_code: str = os.getenv("DEFAULT_LANG_CODE", "a")
     default_voice: str = os.getenv("DEFAULT_VOICE", "af_heart")
     default_speed: float = float(os.getenv("DEFAULT_SPEED", "1.0"))
+    default_tts_model: str = os.getenv("DEFAULT_TTS_MODEL", "local-tts")
+    default_stt_model: str = os.getenv("DEFAULT_STT_MODEL", "local-stt")
+    enabled_models: set[str] = csv_to_set(
+        os.getenv("ENABLED_MODELS"),
+        "local-tts,local-stt",
+    )
 
     sample_rate: int = 24000
     websocket_stt_max_bytes: int = int(

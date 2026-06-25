@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import uuid
 import warnings
 
 warnings.filterwarnings(
@@ -36,7 +37,9 @@ from fastapi import (
     BackgroundTasks,
     FastAPI,
     File,
+    Form,
     HTTPException,
+    Request,
     UploadFile,
 )
 from fastapi.responses import FileResponse, StreamingResponse
@@ -51,6 +54,8 @@ from app.schemas import TTSRequest, TTSFileResponse, STTResponse
 from app.services.tts_service import TTSService
 from app.services.stt_service import STTService
 from app.conversation_routes import create_conversation_router
+from app.elevenlabs_compat import create_elevenlabs_compat_router
+from app.model_registry import build_default_registry
 from app.openai_compat import create_openai_compat_router
 from app.websocket_routes import create_websocket_router
 
@@ -66,11 +71,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-tts_service = TTSService()
-stt_service = STTService()
+model_registry = build_default_registry(settings.enabled_models)
+tts_service = TTSService(model_registry)
+stt_service = STTService(model_registry)
 app.include_router(create_websocket_router(tts_service, stt_service))
 app.include_router(create_conversation_router(tts_service, stt_service))
-app.include_router(create_openai_compat_router(tts_service, stt_service))
+app.include_router(
+    create_openai_compat_router(tts_service, stt_service, model_registry)
+)
+app.include_router(create_elevenlabs_compat_router(tts_service, model_registry))
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    response = await call_next(request)
+    response.headers.setdefault("x-request-id", request_id)
+    return response
 
 
 @app.get("/health")
@@ -96,6 +113,9 @@ def runtime_info():
         "websocket_tts_max_buffer_chars": settings.websocket_tts_max_buffer_chars,
         "conversation_barge_in": settings.conversation_barge_in,
         "cors_allow_origin_regex": settings.cors_allow_origin_regex,
+        "default_tts_model": settings.default_tts_model,
+        "default_stt_model": settings.default_stt_model,
+        "enabled_models": [model.id for model in model_registry.list_models()],
     }
 
 
@@ -103,12 +123,14 @@ def runtime_info():
 def get_voices():
     return {
         "default": settings.default_voice,
-        "examples": [
-            "af_heart",
-            "af_bella",
-            "af_sarah",
-            "am_adam",
-            "am_michael",
+        "voices": [
+            {
+                "id": voice.id,
+                "name": voice.name,
+                "aliases": sorted(voice.aliases),
+                "model_ids": sorted(voice.model_ids),
+            }
+            for voice in model_registry.list_voices()
         ],
         "note": "Voice availability depends on the Kokoro version/model installed.",
     }
@@ -123,6 +145,7 @@ def generate_tts_wav(payload: TTSRequest):
             speed=payload.speed,
             lang_code=payload.lang_code,
             split_pattern=payload.split_pattern,
+            model=payload.model,
         )
 
         return FileResponse(
@@ -147,6 +170,7 @@ def generate_tts_file(payload: TTSRequest):
             speed=payload.speed,
             lang_code=payload.lang_code,
             split_pattern=payload.split_pattern,
+            model=payload.model,
         )
 
         return TTSFileResponse(
@@ -171,6 +195,7 @@ def stream_tts_wav(payload: TTSRequest):
                 speed=payload.speed,
                 lang_code=payload.lang_code,
                 split_pattern=payload.split_pattern,
+                model=payload.model,
             ),
             media_type="audio/wav",
             headers={
@@ -197,6 +222,7 @@ def stream_tts_pcm(payload: TTSRequest):
                 speed=payload.speed,
                 lang_code=payload.lang_code,
                 split_pattern=payload.split_pattern,
+                model=payload.model,
             ),
             media_type="application/octet-stream",
             headers={
@@ -217,7 +243,10 @@ def stream_tts_pcm(payload: TTSRequest):
 
 
 @app.post("/stt/text", response_model=STTResponse)
-async def speech_to_text(audio: UploadFile = File(...)):
+async def speech_to_text(
+    audio: UploadFile = File(...),
+    model: str = Form(settings.default_stt_model),
+):
     suffix = "wav"
     if audio.filename and "." in audio.filename:
         suffix = audio.filename.rsplit(".", 1)[-1].lower()
@@ -236,7 +265,7 @@ async def speech_to_text(audio: UploadFile = File(...)):
             shutil.copyfileobj(audio.file, temp)
             temp_path = temp.name
 
-        result = stt_service.transcribe_file(temp_path)
+        result = stt_service.transcribe_file(temp_path, model=model)
         return result
 
     except Exception as error:
@@ -256,6 +285,7 @@ def play_tts(payload: TTSRequest, background_tasks: BackgroundTasks):
             speed=payload.speed,
             lang_code=payload.lang_code,
             split_pattern=payload.split_pattern,
+            model=payload.model,
         )
 
         background_tasks.add_task(subprocess.run, ["afplay", str(output_path)])

@@ -462,6 +462,11 @@ such as `af_heart` can also be passed directly. Speech `instructions`,
 transcription `prompt`, and per-request language hints are accepted for client
 compatibility but currently reported as ignored through response headers.
 
+The public model name is resolved through the gateway model registry before a
+local backend is selected. OpenAI model names are aliases, not hosted model
+downloads. The default catalog maps TTS aliases to the Kokoro backend and STT
+aliases to the configured local STT router.
+
 Example:
 
 ```bash
@@ -474,6 +479,62 @@ curl http://127.0.0.1:47829/v1/audio/transcriptions \
   -F model=whisper-1 \
   -F file=@speech.mp3
 ```
+
+## ElevenLabs-compatible API subset
+
+The gateway also exposes the common ElevenLabs TTS and voice-discovery shapes:
+
+| Method | Path | Supported behavior |
+|---|---|---|
+| POST | `/v1/text-to-speech/{voice_id}` | Generate speech using an ElevenLabs-style request |
+| POST | `/v1/text-to-speech/{voice_id}/stream` | Stream the generated audio response |
+| GET | `/v1/voices` and `/v2/voices` | List local voices with pagination fields |
+| GET | `/v1/voices/{voice_id}` | Retrieve a local voice or accepted alias |
+| GET | `/elevenlabs/v1/models` | ElevenLabs-shaped local TTS model list |
+
+`/elevenlabs/v1/models` is namespaced because OpenAI and ElevenLabs both define
+`GET /v1/models` with incompatible response schemas. The OpenAI shape remains
+at `/v1/models`.
+
+Example:
+
+```bash
+curl "http://127.0.0.1:47829/v1/text-to-speech/alloy?output_format=mp3_44100_128" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Local speech.","model_id":"eleven_multilingual_v2"}' \
+  --output speech.mp3
+```
+
+## Model and backend architecture
+
+Routes do not instantiate engines directly. They resolve a model and voice
+through `app/model_registry.py`, then the TTS or STT service dispatches to the
+registered provider backend.
+
+The default catalog contains:
+
+- `local-tts` using provider `kokoro`
+- `local-stt` using provider `local-stt-router`
+
+Aliases such as `gpt-4o-mini-tts`, `whisper-1`, and
+`eleven_multilingual_v2` resolve to those canonical local models.
+
+Configure which canonical models are active without changing routes:
+
+```env
+DEFAULT_TTS_MODEL=local-tts
+DEFAULT_STT_MODEL=local-stt
+ENABLED_MODELS=local-tts,local-stt
+```
+
+To add another local model later:
+
+1. Implement or register its provider backend in the relevant service.
+2. Add one `ModelDefinition` to `build_default_registry()`.
+3. Add its voices, aliases, and capabilities to the registry.
+
+No runtime model-management API is exposed. Model availability remains an
+operator-controlled deployment setting.
 
 ## Client SDKs
 
@@ -538,6 +599,7 @@ input/output, response text streaming, and reconnect behavior.
 | WS | `/ws/stt` | Upload audio or receive live partial/final transcripts |
 | WS | `/ws/conversation` | Unified STT/TTS session with barge-in |
 | GET/POST | `/v1/*` | OpenAI-compatible models and audio subset |
+| GET/POST | `/v1/text-to-speech/*`, `/v1/voices*` | ElevenLabs-compatible TTS subset |
 
 ## Tests
 
