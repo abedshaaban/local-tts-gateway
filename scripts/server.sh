@@ -67,16 +67,6 @@ run_tests() {
   echo "All tests passed."
 }
 
-check_sdks() {
-  ensure_venv
-  "$VENV_PYTHON" -m compileall sdk/python/local_tts_gateway
-  (
-    cd sdk/typescript
-    npm install --silent
-    npm run check
-  )
-}
-
 health() {
   curl -s "${BASE_URL}/health" | jq
 }
@@ -162,10 +152,6 @@ case "$1" in
     run_tests
     ;;
 
-  sdk-check)
-    check_sdks
-    ;;
-
   health)
     health
     ;;
@@ -196,7 +182,6 @@ case "$1" in
     echo "  ./scripts/server.sh check            Compile-check Python files"
     echo "  ./scripts/server.sh build            Same as check"
     echo "  ./scripts/server.sh test             Run all tests with verbose results"
-    echo "  ./scripts/server.sh sdk-check        Type-check Python and TypeScript SDKs"
     echo "  ./scripts/server.sh health           Check API health endpoint"
     echo "  ./scripts/server.sh test-tts         Generate speech.wav from TTS endpoint"
     echo "  ./scripts/server.sh test-stt         Send speech.wav to STT endpoint"

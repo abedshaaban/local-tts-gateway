@@ -536,36 +536,7 @@ To add another local model later:
 No runtime model-management API is exposed. Model availability remains an
 operator-controlled deployment setting.
 
-## Client SDKs
-
-### TypeScript/browser
-
-```bash
-cd sdk/typescript
-npm install
-npm run build
-```
-
-```ts
-import { LocalTTSGateway } from "@local-tts-gateway/client";
-
-const gateway = new LocalTTSGateway();
-const conversation = gateway.conversation({
-  onEvent: (event) => console.log(event),
-});
-
-await conversation.connect();
-await conversation.startMicrophone();
-conversation.createResponse("The gateway can speak this response.");
-```
-
-The browser client performs microphone capture, downsampling to 16 kHz
-`pcm_s16le`, PCM playback, interruption cleanup, cancellation, and reconnects.
-Browser HTTP calls are allowed by default from `localhost`, `127.0.0.1`, and
-local `file://` pages. Override `CORS_ALLOW_ORIGIN_REGEX` when integrating a
-different local origin.
-
-### Python
+## Optional Python client
 
 ```bash
 pip install -e sdk/python
@@ -610,8 +581,7 @@ make test
 ```
 
 `make tests` is an alias. Running `make test tests` still executes the suite
-only once. To compile-check the application, run tests, and type-check both
-SDKs:
+only once. To compile-check the application and run tests:
 
 ```bash
 make local
