@@ -8,3 +8,9 @@ models/
 .DS_Store
 node_modules/
 dist/
+speech.wav
+offline-test.wav
+stream.wav
+stream.pcm
+offline-stream.wav
+offline-stream.pcm

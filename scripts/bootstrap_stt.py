@@ -15,6 +15,13 @@ os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
 def main():
+    warmup_file = ROOT_DIR / "speech.wav"
+    if not warmup_file.exists():
+        raise SystemExit(
+            "speech.wav is required for STT warmup. "
+            "Create one with: ./scripts/server.sh test-tts"
+        )
+
     configured = os.getenv("FASTER_WHISPER_MODEL", "openai/whisper-tiny.en")
     model_name = resolve_faster_whisper_model(configured)
     device = os.getenv("FASTER_WHISPER_DEVICE", "cpu")
@@ -29,7 +36,7 @@ def main():
 
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
     segments, info = model.transcribe(
-        str(ROOT_DIR / "speech.wav"),
+        str(warmup_file),
         language=os.getenv("STT_LANGUAGE", "en"),
         vad_filter=True,
         beam_size=1,

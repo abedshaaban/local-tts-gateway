@@ -8,6 +8,3 @@ numpy
 huggingface_hub
 python-multipart
 pydub
-mlx
-parakeet-mlx
-faster-whisper

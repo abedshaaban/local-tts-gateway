@@ -48,7 +48,7 @@ start_server() {
 
 check_app() {
   ensure_venv
-  "$VENV_PYTHON" -m compileall app
+  "$VENV_PYTHON" -m compileall app scripts sdk/python
 }
 
 run_tests() {
@@ -68,7 +68,7 @@ run_tests() {
 }
 
 health() {
-  curl -s "${BASE_URL}/health" | jq
+  curl -s "${BASE_URL}/health" | format_json
 }
 
 test_tts() {
@@ -89,7 +89,7 @@ test_stt() {
   fi
 
   curl -s -X POST "${BASE_URL}/stt/text" \
-    -F "audio=@speech.wav" | jq
+    -F "audio=@speech.wav" | format_json
 }
 
 record_stt() {
@@ -107,7 +107,7 @@ record_stt() {
 
   echo "🧠 Transcribing..."
   curl -s -X POST "${BASE_URL}/stt/text" \
-    -F "audio=@${AUDIO_FILE}" | jq -r '.text'
+    -F "audio=@${AUDIO_FILE}" | format_transcript_text
 }
 
 cache_stt() {
@@ -128,6 +128,26 @@ cache_stt() {
   else
     echo "⚠️ parakeet-mlx not found."
     echo "Install it with: pip install parakeet-mlx"
+  fi
+}
+
+format_json() {
+  if command -v jq >/dev/null 2>&1; then
+    jq
+  elif [ -x "$VENV_PYTHON" ]; then
+    "$VENV_PYTHON" -m json.tool
+  else
+    python3 -m json.tool
+  fi
+}
+
+format_transcript_text() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.text'
+  elif [ -x "$VENV_PYTHON" ]; then
+    "$VENV_PYTHON" -c 'import json, sys; print(json.load(sys.stdin).get("text", ""))'
+  else
+    python3 -c 'import json, sys; print(json.load(sys.stdin).get("text", ""))'
   fi
 }
 
