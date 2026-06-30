@@ -1,5 +1,7 @@
 # Local Speech Gateway
 
+![Local Speech Gateway architecture illustration](docs/assets/local-speech-gateway-hero.png)
+
 A local FastAPI gateway for text-to-speech and speech-to-text.
 
 - **TTS:** Kokoro, loaded lazily and reused per language.
